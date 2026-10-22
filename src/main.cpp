@@ -5,6 +5,7 @@
 
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
 #include "GlobalNamespace/SongPreviewPlayer.hpp"
+#include "HMUI/ViewController.hpp"
 #include "UnityEngine/Canvas.hpp"
 #include "UnityEngine/Component.hpp"
 #include "UnityEngine/MonoBehaviour.hpp"
@@ -185,7 +186,8 @@ static const char* kBsml = R"(
 </bg>
 )";
 
-static void OnSettingsDidActivate(UnityEngine::GameObject* root, bool firstActivation) {
+static void OnSettingsDidActivate(HMUI::ViewController* self, bool firstActivation, bool addedToHierarchy, bool screenSystemEnabling) {
+    auto root = self->get_gameObject();
     if (!firstActivation) { if (g_host) g_host->Refresh(); return; }
     g_host = root->AddComponent<TwitchBsr::SettingsHost*>();
     g_host->username = g_username;
@@ -206,7 +208,7 @@ MOD_EXTERN_FUNC void late_load() noexcept {
     il2cpp_functions::Init();
     custom_types::Register::AutoRegister();
     BSML::Init();
-    BSML::Register::RegisterSettingsMenu("Twitch BSR", OnSettingsDidActivate);  // adjust to your BSML version
+    BSML::Register::RegisterSettingsMenu("Twitch BSR", OnSettingsDidActivate, false);
 
     INSTALL_HOOK(Logger, Preview_Update);
     INSTALL_HOOK(Logger, Sync_Update);
