@@ -116,7 +116,7 @@ static void Pump() {
 // This avoids the unresolved A64HookFunction symbol entirely.
 DECLARE_CLASS_CODE(TwitchBsr, ChatPumpBehaviour, UnityEngine::MonoBehaviour,
     DECLARE_INSTANCE_METHOD(void, Update);
-)
+);
 DEFINE_TYPE(TwitchBsr, ChatPumpBehaviour);
 void TwitchBsr::ChatPumpBehaviour::Update() { Pump(); }
 

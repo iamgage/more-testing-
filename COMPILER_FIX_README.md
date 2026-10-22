@@ -1,0 +1,1 @@
+Fix: terminate DECLARE_CLASS_CODE(...) with a semicolon. Without it, the generated C++ class declaration is not terminated and subsequent DEFINE_TYPE and AddComponent references fail. This is a targeted source correction, not a verified Quest build. Keep strict linker checks.
