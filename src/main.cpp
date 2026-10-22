@@ -130,7 +130,8 @@ DECLARE_CLASS_CODEGEN(TwitchBsr, SettingsHost, UnityEngine::MonoBehaviour) {
 };
 DEFINE_TYPE(TwitchBsr, SettingsHost);
 
-static TwitchBsr::SettingsHost* g_host = nullptr;
+static UnityW<TwitchBsr::SettingsHost> g_settingsHost;
+static UnityW<TwitchBsr::SettingsHost> g_modsHost;
 
 static std::string g_statusOverride;
 
@@ -186,15 +187,31 @@ static const char* kBsml = R"(
 </vertical>
 )";
 
-static void OnSettingsDidActivate(HMUI::ViewController* self, bool firstActivation, bool addedToHierarchy, bool screenSystemEnabling) {
+// Each view owns its own host. Never reuse a raw component pointer across menus.
+static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
+                         UnityW<TwitchBsr::SettingsHost>& host) {
+    if (!firstActivation && host.isAlive()) {
+        host->Refresh();
+        return;
+    }
     auto root = self->get_gameObject();
-    if (g_host && !firstActivation) { g_host->Refresh(); return; }
-    g_host = root->AddComponent<TwitchBsr::SettingsHost*>();
-    g_host->username = g_username;
-    g_host->showChat = g_showChat;
-    g_host->bsrEnabled = BsrQueue::Get().enabled;
-    BSML::parse_and_construct(kBsml, root->get_transform(), g_host);
-    g_host->Refresh();
+    auto component = root->AddComponent<TwitchBsr::SettingsHost*>();
+    host = component;
+    component->username = g_username;
+    component->showChat = g_showChat;
+    component->bsrEnabled = BsrQueue::Get().enabled;
+    BSML::parse_and_construct(kBsml, root->get_transform(), component);
+    component->Refresh();
+}
+
+static void OnSettingsDidActivate(HMUI::ViewController* self, bool firstActivation,
+                                  bool addedToHierarchy, bool screenSystemEnabling) {
+    BuildBsrPage(self, firstActivation, g_settingsHost);
+}
+
+static void OnModsDidActivate(HMUI::ViewController* self, bool firstActivation,
+                              bool addedToHierarchy, bool screenSystemEnabling) {
+    BuildBsrPage(self, firstActivation, g_modsHost);
 }
 
 // ----------------------------------------------------------------- entry ----
@@ -209,13 +226,15 @@ MOD_EXTERN_FUNC void late_load() noexcept {
     custom_types::Register::AutoRegister();
     BSML::Init();
     INFO("late_load reached, registering BSR menu");
-    BSML::Register::RegisterSettingsMenu("BSR", OnSettingsDidActivate, false);
+    BSML::Register::RegisterSettingsMenu("Twitch BSR", OnSettingsDidActivate, false);
+    BSML::Register::RegisterMainMenuViewControllerMethod(
+        "Twitch BSR", "Twitch BSR", "Twitch chat and song requests", OnModsDidActivate);
 
     INSTALL_HOOK(Logger, Preview_Update);
     INSTALL_HOOK(Logger, Sync_Update);
 
     BsrQueue::Get().SetOnChanged([] {
-        BSML::MainThreadScheduler::Schedule([] { if (g_host) g_host->Refresh(); });
+        BSML::MainThreadScheduler::Schedule([] { if (g_settingsHost.isAlive()) g_settingsHost->Refresh(); if (g_modsHost.isAlive()) g_modsHost->Refresh(); });
     });
     if (!g_username.empty()) TwitchIRC::Get().Connect(g_username);  // auto-reconnect on launch
 }
