@@ -1,0 +1,60 @@
+name: Build TwitchBSR qmod
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          link-to-sdk: true
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: QPM restore
+        uses: QuestPackageManager/qpm-action@v1
+        with:
+          workflow_token: ${{ secrets.GITHUB_TOKEN }}
+          restore: true
+          cache: true
+          publish: false
+
+      - name: Build native library
+        run: |
+          cmake -G Ninja -B build \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_TOOLCHAIN_FILE="${{ steps.ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24
+          cmake --build build -j"$(nproc)"
+          ls -la build/*.so
+
+      - name: Package qmod
+        run: |
+          qpm qmod build
+          qpm qmod zip TwitchBSR.qmod
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TwitchBSR.qmod
+          path: TwitchBSR.qmod
+          if-no-files-found: error
+
+      - name: Upload .so (debug)
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtwitch-bsr.so
+          path: build/libtwitch-bsr.so
