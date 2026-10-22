@@ -1,28 +1,25 @@
-# Functional + UI feedback fixes (source-only, experimental)
+# Hardened button callbacks + visible feedback (source-only)
 
-## Previous fixes retained
-- Prevent deadlocks: `!oops`, Clear Queue, and Remove now invoke callbacks after releasing the queue mutex.
-- Download status is tracked per request and shown in the queue.
-- Automatic downloads use the exact resolved request rather than a potentially different `queue.back()`.
-- Reposition Chat cycles Left / Right / Centre and updates the button label.
-- Test Chat respects the Show Chat toggle.
-- Play Song still relies on the existing experimental SoloButton navigation and is not confirmed working.
+## Targeted fixes for the three reported dead buttons
+1. **Twitch Connection** (home page)
+   - Now logs on press, sets status "Opening Connection...", then switches page.
+   - Connection page itself has instructional text so it never looks empty.
 
-## New UI / feedback fixes (addressing “buttons have no functions or UIs”)
-- Page switch (`show()`) now always calls `RefreshPageText()` so status / channel / queue stay current.
-- Pages start with only Home active; others are explicitly deactivated.
-- Home page has a short subtitle explaining the mod.
-- Connection page has instructional text (“Use Edit to type channel, then Connect”).
-- Every action button now writes a clear `g_statusOverride` message and refreshes the UI immediately:
-  - Connect / Disconnect / invalid name
-  - Chat Overlay ON/OFF, Test Chat, Position change
-  - BSR enable/disable
-  - Download (shows count or “Queue is empty”)
-  - Play Last Download
-  - Clear Queue
-- This makes every button give visible feedback even when the queue is empty or no channel is set.
+2. **BSR: ON/OFF** (Song Requests page)
+   - Logs the previous state, flips the flag, updates the button label, writes status "BSR enabled/disabled".
 
-## Still experimental
-- The zip has not been compiled or tested on Quest.
-- Play Song navigation remains unconfirmed.
-- If buttons still appear dead, capture logcat after pressing a specific button and check for BSML / CreateUIButton errors.
+3. **Test Chat Overlay** (Chat Settings page)
+   - Logs the current showChat flag.
+   - If overlay is off, status becomes "Enable overlay first".
+   - Otherwise pushes a test line, calls EnsureOverlay(), schedules RefreshOverlay, and sets status "Test message sent - look for overlay".
+
+## Supporting changes
+- Home page now has a permanent status line (`g_homeStatus`) that updates on every action, so feedback is always visible even if you stay on Home.
+- `show()` page switch is defensive (null/m_CachedPtr checks) and logs the target page.
+- `RefreshPageText()` also refreshes the home status line.
+- Every important button now emits an INFO log so logcat can prove whether the callback fired.
+- PageButton return type is explicit `UnityEngine::UI::Button*`.
+
+## Still experimental / not Quest-tested
+- If a button still produces zero logcat output when pressed, the click is not reaching the BSML button (raycast / hierarchy issue) rather than the C++ callback being empty.
+- Capture logcat after pressing the exact button and look for lines starting with "TwitchBSR:".
