@@ -80,8 +80,8 @@ static std::string Str(const rapidjson::Value& v, const char* k) {
 
 void BsrQueue::Resolve(std::string key, std::string user) {
     std::thread([this, key, user] {
-        WebUtils::URLOptions opts;
-        opts.url = "https://api.beatsaver.com/maps/id/" + key;
+        std::string url = "https://api.beatsaver.com/maps/id/" + key;
+        WebUtils::URLOptions opts(url);
         auto resp = WebUtils::GetAsync<WebUtils::StringResponse>(opts).get();
         if (!resp.IsSuccessful() || !resp.responseData) return;
         rapidjson::Document d;
@@ -126,8 +126,8 @@ void BsrQueue::Clear() {
 }
 
 void BsrQueue::Download(const SongRequest& req) {
-    WebUtils::URLOptions opts;
-    opts.url = req.downloadUrl;
+    std::string url = req.downloadUrl;
+    WebUtils::URLOptions opts(url);
     auto resp = WebUtils::GetAsync<WebUtils::DataResponse>(opts).get();
     if (!resp.IsSuccessful() || !resp.responseData) return;
 
