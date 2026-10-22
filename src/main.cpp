@@ -216,110 +216,114 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
                          UnityW<TMPro::TMP_Text>& status, UnityW<TMPro::TMP_Text>& queue,
                          UnityW<TMPro::TMP_Text>& input) {
     INFO("TwitchBSR: BuildBsrPage called");
-    if (!firstActivation) { RefreshPageText(); RefreshOverlay(); return; }
+    if (!firstActivation) { RefreshPageText(); return; }
     auto container = BSML::Lite::CreateScrollableSettingsContainer(self->get_transform());
     auto parent = container->get_transform();
-    BSML::Lite::CreateText(parent, "TWITCH BSR");
-    input = BSML::Lite::CreateText(parent, "Channel: " + g_username);
-    // Separate page: only one page is active, so the keyboard cannot overlap settings.
-    auto settingsRoot = UnityEngine::GameObject::New_ctor("TwitchBsrSettingsPage");
-    settingsRoot->get_transform()->SetParent(parent, false);
-    auto settingsParent = settingsRoot->get_transform();
-    // Keyboard stays hidden until requested. Character pages reduce clipping.
-    auto keyboardRoot = UnityEngine::GameObject::New_ctor("TwitchBsrKeyboard");
-    keyboardRoot->get_transform()->SetParent(parent, false);
-    auto pageA = UnityEngine::GameObject::New_ctor("TwitchBsrKeysA");
-    pageA->get_transform()->SetParent(keyboardRoot->get_transform(), false);
-    auto pageB = UnityEngine::GameObject::New_ctor("TwitchBsrKeysB");
-    pageB->get_transform()->SetParent(keyboardRoot->get_transform(), false);
-    auto addKeys = [](UnityEngine::Transform* target, const char* keys) {
-        // Maximum five buttons per row, unlike the previous ten-button layout.
-        std::string letters(keys);
-        for (size_t i = 0; i < letters.size(); i += 5) {
-            auto row = BSML::Lite::CreateHorizontalLayoutGroup(target);
-            for (char c : letters.substr(i, 5)) {
-                BSML::Lite::CreateUIButton(row->get_transform(), std::string(1, c), [c] { TypeKey(c); });
-            }
-        }
+    // One short page at a time. Each tab has its own BSML layout group.
+    auto header = BSML::Lite::CreateVerticalLayoutGroup(parent);
+    input = BSML::Lite::CreateText(header->get_transform(), "Channel: " + g_username);
+    auto tabs = BSML::Lite::CreateHorizontalLayoutGroup(parent);
+    auto connection = BSML::Lite::CreateVerticalLayoutGroup(parent);
+    auto chat = BSML::Lite::CreateVerticalLayoutGroup(parent);
+    auto requests = BSML::Lite::CreateVerticalLayoutGroup(parent);
+    auto keyboard = BSML::Lite::CreateVerticalLayoutGroup(parent);
+    auto show = [connection, chat, requests, keyboard](int page) {
+        connection->SetActive(page == 0);
+        chat->SetActive(page == 1);
+        requests->SetActive(page == 2);
+        keyboard->SetActive(page == 3);
     };
-    addKeys(pageA->get_transform(), "qwertyuiopasdfg");
-    addKeys(pageB->get_transform(), "hjklzxcvbnm0123456789_-");
-    pageB->SetActive(false);
-    auto keyboardControls = BSML::Lite::CreateHorizontalLayoutGroup(keyboardRoot->get_transform());
-    BSML::Lite::CreateUIButton(keyboardControls->get_transform(), "ABC / 123", [pageA, pageB] {
-        bool showB = pageA->get_activeSelf();
-        pageA->SetActive(!showB);
-        pageB->SetActive(showB);
-    });
-    BSML::Lite::CreateUIButton(keyboardControls->get_transform(), "Delete", [] {
-        if (!g_username.empty()) g_username.pop_back();
-        RefreshPageText();
-    });
-    BSML::Lite::CreateUIButton(keyboardControls->get_transform(), "Clear", [] {
-        g_username.clear(); RefreshPageText();
-    });
-    keyboardRoot->SetActive(false);
-    BSML::Lite::CreateUIButton(keyboardRoot->get_transform(), "Done / Back", [keyboardRoot, settingsRoot] {
-        keyboardRoot->SetActive(false);
-        settingsRoot->SetActive(true);
-        RefreshPageText();
-    });
-    BSML::Lite::CreateUIButton(settingsParent, "Edit Channel", [keyboardRoot, settingsRoot] {
-        settingsRoot->SetActive(false);
-        keyboardRoot->SetActive(true);
-    });
-    BSML::Lite::CreateText(settingsParent, "CONNECTION");
-    BSML::Lite::CreateUIButton(settingsParent, "Connect / Save", [] {
+    BSML::Lite::CreateUIButton(tabs->get_transform(), "Twitch", [show] { show(0); });
+    BSML::Lite::CreateUIButton(tabs->get_transform(), "Chat", [show] { show(1); });
+    BSML::Lite::CreateUIButton(tabs->get_transform(), "Requests", [show] { show(2); });
+
+    auto conn = connection->get_transform();
+    status = BSML::Lite::CreateText(conn, StatusString());
+    BSML::Lite::CreateUIButton(conn, "Edit Channel", [show] { show(3); });
+    BSML::Lite::CreateUIButton(conn, "Connect / Save", [] {
         auto clean = TwitchIRC::SanitizeChannel(g_username);
         if (!clean) {
-            g_statusOverride = "Invalid channel (3-25 letters, numbers, _)";
+            g_statusOverride = "Invalid channel name";
         } else {
             g_username = *clean;
             SaveConfig();
             bool started = TwitchIRC::Get().Connect(g_username);
-            g_statusOverride = started ? "Connecting to #" + g_username + "..." : "Connection rejected";
-            INFO("TwitchBSR: connect pressed, channel={}, started={}", g_username, started);
+            g_statusOverride = started ? "Connecting..." : "Connection rejected";
         }
         RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(settingsParent, "Disconnect", [] {
+    BSML::Lite::CreateUIButton(conn, "Disconnect", [] {
         TwitchIRC::Get().Disconnect();
         g_statusOverride = "Disconnected";
         RefreshPageText();
     });
-    status = BSML::Lite::CreateText(settingsParent, StatusString());
-    BSML::Lite::CreateText(settingsParent, "CHAT OVERLAY");
-    BSML::Lite::CreateUIButton(settingsParent, "Refresh Chat Position", [] {
-        // Never override the Show chat overlay toggle.
-        RefreshOverlay();
+
+    auto ch = chat->get_transform();
+    BSML::Lite::CreateToggle(ch, "Show chat overlay", g_showChat, [](bool enabled) {
+        g_showChat = enabled;
+        SaveConfig();
+        if (!enabled) {
+            if (g_chatGo && g_chatGo->m_CachedPtr.m_value) g_chatGo->SetActive(false);
+        } else {
+            BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
+        }
     });
-    BSML::Lite::CreateUIButton(settingsParent, "Test Chat Overlay", [] {
-        g_lines.push_back("<color=#9146FF>TEST:</color> Chat overlay is visible!");
+    BSML::Lite::CreateUIButton(ch, "Test Chat", [] {
+        g_lines.push_back("<color=#9146FF>TEST:</color> Chat overlay test");
         while ((int)g_lines.size() > g_maxLines) g_lines.pop_front();
-        RefreshOverlay();
+        BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
     });
-    BSML::Lite::CreateToggle(settingsParent, "Enable BSR requests", BsrQueue::Get().enabled,
+    BSML::Lite::CreateUIButton(ch, "Reposition Chat", [] {
+        BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
+    });
+
+    auto req = requests->get_transform();
+    BSML::Lite::CreateToggle(req, "Enable BSR", BsrQueue::Get().enabled,
         [](bool enabled) { BsrQueue::Get().enabled = enabled; });
-    BSML::Lite::CreateToggle(settingsParent, "Show chat overlay", g_showChat,
-        [](bool enabled) {
-            g_showChat = enabled;
-            SaveConfig();
-            if (!enabled && g_chatGo && g_chatGo->m_CachedPtr.m_value) g_chatGo->SetActive(false);
-            else RefreshOverlay();
-        });
-    BSML::Lite::CreateText(settingsParent, "REQUEST QUEUE");
-    queue = BSML::Lite::CreateText(settingsParent, "Queue empty");
-    BSML::Lite::CreateUIButton(settingsParent, "Download all", [] {
-        BsrQueue::Get().DownloadAll(); RefreshPageText();
+    queue = BSML::Lite::CreateText(req, "Queue empty");
+    BSML::Lite::CreateUIButton(req, "Download All", [] {
+        BsrQueue::Get().DownloadAll();
+        RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(settingsParent, "Play Song (last download)", [] {
+    BSML::Lite::CreateUIButton(req, "Play Last Download", [] {
         PlayLatestDownloaded();
     });
-    BSML::Lite::CreateUIButton(settingsParent, "Clear queue", [] {
-        BsrQueue::Get().Clear(); RefreshPageText();
+    BSML::Lite::CreateUIButton(req, "Clear Queue", [] {
+        BsrQueue::Get().Clear();
+        RefreshPageText();
     });
+
+    auto kb = keyboard->get_transform();
+    BSML::Lite::CreateText(kb, "Edit channel name");
+    // Four narrow rows per page, with at most four keys in a row.
+    auto letters = BSML::Lite::CreateVerticalLayoutGroup(kb);
+    auto symbols = BSML::Lite::CreateVerticalLayoutGroup(kb);
+    auto addKeys = [](UnityEngine::Transform* target, const char* keys) {
+        std::string chars(keys);
+        for (size_t i = 0; i < chars.size(); i += 4) {
+            auto row = BSML::Lite::CreateHorizontalLayoutGroup(target);
+            for (char c : chars.substr(i, 4))
+                BSML::Lite::CreateUIButton(row->get_transform(), std::string(1, c),
+                    [c] { TypeKey(c); });
+        }
+    };
+    addKeys(letters->get_transform(), "qwertyuiopasdf");
+    addKeys(symbols->get_transform(), "ghjklzxcvbnm0123456789_-");
+    symbols->SetActive(false);
+    auto controls = BSML::Lite::CreateHorizontalLayoutGroup(kb);
+    BSML::Lite::CreateUIButton(controls->get_transform(), "More Keys", [letters, symbols] {
+        bool next = letters->get_activeSelf();
+        letters->SetActive(!next);
+        symbols->SetActive(next);
+    });
+    BSML::Lite::CreateUIButton(controls->get_transform(), "Delete", [] {
+        if (!g_username.empty()) g_username.pop_back();
+        RefreshPageText();
+    });
+    BSML::Lite::CreateUIButton(kb, "Done", [show] { show(0); });
+    show(0);
     RefreshPageText();
-    RefreshOverlay();
+    // Do not allocate a Unity canvas while building the settings page.
 }
 static void OnSettingsDidActivate(HMUI::ViewController* self, bool firstActivation,
                                   bool addedToHierarchy, bool screenSystemEnabling) {
