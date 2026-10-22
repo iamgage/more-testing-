@@ -4,6 +4,10 @@
 #include "scotland2/shared/loader.hpp"
 #include "scotland2/shared/modloader.h"
 
+#ifndef MOD_EXTERN_FUNC
+#define MOD_EXTERN_FUNC extern "C" __attribute__((visibility("default")))
+#endif
+
 #ifndef MOD_ID
 #define MOD_ID "twitch-bsr"
 #endif
