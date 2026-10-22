@@ -104,6 +104,17 @@ void BsrQueue::Resolve(std::string key, std::string user) {
             queue.push_back(std::move(r));
         }
         if (onChanged) onChanged();
+        // Download only the newly resolved request (not the whole queue).
+        SongRequest toDownload;
+        {
+            std::lock_guard<std::mutex> l(mtx);
+            if (!queue.empty()) toDownload = queue.back();
+        }
+        if (!toDownload.downloadUrl.empty()) {
+            Download(toDownload);
+            SongCore::API::Loading::RefreshSongs(false);
+            if (onChanged) onChanged();
+        }
     }).detach();
 }
 

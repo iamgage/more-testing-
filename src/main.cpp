@@ -100,9 +100,9 @@ static void EnsureOverlay() {
     if (canvas) canvas->set_worldCamera(camera);
     auto transform = g_chatGo->get_transform();
     transform->SetParent(camera->get_transform(), false);
-    transform->set_localPosition({-0.48f, 0.04f, 1.35f});
+    transform->set_localPosition({-0.30f, 0.05f, 1.25f});
     transform->set_localEulerAngles({0.0f, 0.0f, 0.0f});
-    transform->set_localScale({0.012f, 0.012f, 0.012f});
+    transform->set_localScale({0.009f, 0.009f, 0.009f});
 }
 
 static void RefreshOverlay() {
@@ -221,7 +221,11 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
     auto parent = container->get_transform();
     BSML::Lite::CreateText(parent, "TWITCH BSR");
     input = BSML::Lite::CreateText(parent, "Channel: " + g_username);
-    // Keyboard is hidden until requested. Two short pages prevent Quest menu clipping.
+    // Separate page: only one page is active, so the keyboard cannot overlap settings.
+    auto settingsRoot = UnityEngine::GameObject::New_ctor("TwitchBsrSettingsPage");
+    settingsRoot->get_transform()->SetParent(parent, false);
+    auto settingsParent = settingsRoot->get_transform();
+    // Keyboard stays hidden until requested. Character pages reduce clipping.
     auto keyboardRoot = UnityEngine::GameObject::New_ctor("TwitchBsrKeyboard");
     keyboardRoot->get_transform()->SetParent(parent, false);
     auto pageA = UnityEngine::GameObject::New_ctor("TwitchBsrKeysA");
@@ -255,11 +259,17 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         g_username.clear(); RefreshPageText();
     });
     keyboardRoot->SetActive(false);
-    BSML::Lite::CreateUIButton(parent, "Edit Channel / Close Keyboard", [keyboardRoot] {
-        keyboardRoot->SetActive(!keyboardRoot->get_activeSelf());
+    BSML::Lite::CreateUIButton(keyboardRoot->get_transform(), "Done / Back", [keyboardRoot, settingsRoot] {
+        keyboardRoot->SetActive(false);
+        settingsRoot->SetActive(true);
+        RefreshPageText();
     });
-    BSML::Lite::CreateText(parent, "CONNECTION");
-    BSML::Lite::CreateUIButton(parent, "Connect / Save", [] {
+    BSML::Lite::CreateUIButton(settingsParent, "Edit Channel", [keyboardRoot, settingsRoot] {
+        settingsRoot->SetActive(false);
+        keyboardRoot->SetActive(true);
+    });
+    BSML::Lite::CreateText(settingsParent, "CONNECTION");
+    BSML::Lite::CreateUIButton(settingsParent, "Connect / Save", [] {
         auto clean = TwitchIRC::SanitizeChannel(g_username);
         if (!clean) {
             g_statusOverride = "Invalid channel (3-25 letters, numbers, _)";
@@ -272,38 +282,40 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         }
         RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(parent, "Disconnect", [] {
+    BSML::Lite::CreateUIButton(settingsParent, "Disconnect", [] {
         TwitchIRC::Get().Disconnect();
         g_statusOverride = "Disconnected";
         RefreshPageText();
     });
-    status = BSML::Lite::CreateText(parent, StatusString());
-    BSML::Lite::CreateText(parent, "CHAT OVERLAY");
-    BSML::Lite::CreateUIButton(parent, "Show / Reposition Chat", [] {
-        g_showChat = true;
-        SaveConfig();
+    status = BSML::Lite::CreateText(settingsParent, StatusString());
+    BSML::Lite::CreateText(settingsParent, "CHAT OVERLAY");
+    BSML::Lite::CreateUIButton(settingsParent, "Refresh Chat Position", [] {
+        // Never override the Show chat overlay toggle.
         RefreshOverlay();
     });
-    BSML::Lite::CreateUIButton(parent, "Test Chat Overlay", [] {
-        g_showChat = true;
-        SaveConfig();
+    BSML::Lite::CreateUIButton(settingsParent, "Test Chat Overlay", [] {
         g_lines.push_back("<color=#9146FF>TEST:</color> Chat overlay is visible!");
         while ((int)g_lines.size() > g_maxLines) g_lines.pop_front();
         RefreshOverlay();
     });
-    BSML::Lite::CreateToggle(parent, "Enable BSR requests", BsrQueue::Get().enabled,
+    BSML::Lite::CreateToggle(settingsParent, "Enable BSR requests", BsrQueue::Get().enabled,
         [](bool enabled) { BsrQueue::Get().enabled = enabled; });
-    BSML::Lite::CreateToggle(parent, "Show chat overlay", g_showChat,
-        [](bool enabled) { g_showChat = enabled; SaveConfig(); RefreshOverlay(); });
-    BSML::Lite::CreateText(parent, "REQUEST QUEUE");
-    queue = BSML::Lite::CreateText(parent, "Queue empty");
-    BSML::Lite::CreateUIButton(parent, "Download all", [] {
+    BSML::Lite::CreateToggle(settingsParent, "Show chat overlay", g_showChat,
+        [](bool enabled) {
+            g_showChat = enabled;
+            SaveConfig();
+            if (!enabled && g_chatGo && g_chatGo->m_CachedPtr.m_value) g_chatGo->SetActive(false);
+            else RefreshOverlay();
+        });
+    BSML::Lite::CreateText(settingsParent, "REQUEST QUEUE");
+    queue = BSML::Lite::CreateText(settingsParent, "Queue empty");
+    BSML::Lite::CreateUIButton(settingsParent, "Download all", [] {
         BsrQueue::Get().DownloadAll(); RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(parent, "Play Song (last download)", [] {
+    BSML::Lite::CreateUIButton(settingsParent, "Play Song (last download)", [] {
         PlayLatestDownloaded();
     });
-    BSML::Lite::CreateUIButton(parent, "Clear queue", [] {
+    BSML::Lite::CreateUIButton(settingsParent, "Clear queue", [] {
         BsrQueue::Get().Clear(); RefreshPageText();
     });
     RefreshPageText();
