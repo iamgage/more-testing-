@@ -6,6 +6,9 @@
 #include "GlobalNamespace/AudioTimeSyncController.hpp"
 #include "GlobalNamespace/SongPreviewPlayer.hpp"
 #include "UnityEngine/Canvas.hpp"
+#include "UnityEngine/Component.hpp"
+#include "UnityEngine/MonoBehaviour.hpp"
+#include "UnityEngine/Object.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/RenderMode.hpp"
@@ -14,6 +17,7 @@
 #include "UnityEngine/Vector3.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "bsml/shared/BSML.hpp"
+#include "bsml/shared/BSML/MainThreadScheduler.hpp"
 #include "bsml/shared/Helpers/creation.hpp"
 #include "custom-types/shared/macros.hpp"
 
