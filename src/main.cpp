@@ -194,6 +194,7 @@ static void TypeKey(char c) {
 
 static UnityW<TMPro::TMP_Text> g_settingsStatus;
 static UnityW<TMPro::TMP_Text> g_modsStatus;
+static UnityW<TMPro::TMP_Text> g_homeStatus;  // home-page status line
 static UnityW<TMPro::TMP_Text> g_settingsQueue;
 static UnityW<TMPro::TMP_Text> g_modsQueue;
 static UnityW<TMPro::TMP_Text> g_settingsInput;
@@ -252,9 +253,6 @@ static UnityEngine::UI::Button* PageButton(UnityEngine::Transform* p, const std:
                        float x, float y, float w, std::function<void()> cb) {
     return BSML::Lite::CreateUIButton(p, label, {x, y}, {w, 8.0f}, std::move(cb));
 }
-
-// Always-visible status on the home page so every action produces feedback
-static UnityW<TMPro::TMP_Text> g_homeStatus;
 
 static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
                          UnityW<TMPro::TMP_Text>& status, UnityW<TMPro::TMP_Text>& queue,
