@@ -19,6 +19,8 @@
 #include "bsml/shared/BSML.hpp"
 #include "bsml/shared/BSML-Lite.hpp"
 #include "TMPro/TMP_Text.hpp"
+#include "TMPro/TextAlignmentOptions.hpp"
+#include "UnityEngine/UI/Button.hpp"
 #include "bsml/shared/BSML/MainThreadScheduler.hpp"
 #include "bsml/shared/Helpers/creation.hpp"
 #include "custom-types/shared/macros.hpp"
@@ -31,6 +33,7 @@
 #include "System/Nullable_1.hpp"
 
 #include <deque>
+#include <functional>
 #include <fstream>
 #include <filesystem>
 #include <chrono>
@@ -191,6 +194,7 @@ static UnityW<TMPro::TMP_Text> g_settingsQueue;
 static UnityW<TMPro::TMP_Text> g_modsQueue;
 static UnityW<TMPro::TMP_Text> g_settingsInput;
 static UnityW<TMPro::TMP_Text> g_modsInput;
+static std::vector<UnityW<TMPro::TMP_Text>> g_kbInputs;
 
 static std::string StatusString() {
     auto& irc = TwitchIRC::Get();
@@ -209,48 +213,74 @@ static std::string QueueString() {
 static void RefreshPageText() {
     if (g_settingsInput.isAlive()) g_settingsInput->set_text("Channel: " + g_username);
     if (g_modsInput.isAlive()) g_modsInput->set_text("Channel: " + g_username);
+    for (auto& k : g_kbInputs)
+        if (k.isAlive()) k->set_text("Channel: " + g_username);
     if (g_settingsStatus.isAlive()) g_settingsStatus->set_text(StatusString());
     if (g_modsStatus.isAlive()) g_modsStatus->set_text(StatusString());
     if (g_settingsQueue.isAlive()) g_settingsQueue->set_text(QueueString());
     if (g_modsQueue.isAlive()) g_modsQueue->set_text(QueueString());
 }
+// ---- Fixed-position page layout -------------------------------------------
+// Layout groups / scroll containers were not sizing their children on Quest, so
+// every control collapsed onto the same spot. Instead each page is a plain
+// full-size RectTransform and every control gets an explicit anchored position
+// (units are relative to the centre of the settings panel), so nothing can stack.
+static UnityEngine::Transform* MakePage(UnityEngine::Transform* parent, const char* name) {
+    auto go = UnityEngine::GameObject::New_ctor(name);
+    auto rt = go->AddComponent<UnityEngine::RectTransform*>();
+    rt->SetParent(parent, false);
+    rt->set_anchorMin({0.0f, 0.0f});
+    rt->set_anchorMax({1.0f, 1.0f});
+    rt->set_offsetMin({0.0f, 0.0f});
+    rt->set_offsetMax({0.0f, 0.0f});
+    return rt->get_transform();
+}
+static TMPro::TMP_Text* PageText(UnityEngine::Transform* p, const std::string& t,
+                                 float x, float y, float w, float h, float size) {
+    auto txt = BSML::Lite::CreateText(p, t, {x, y}, {w, h});
+    txt->set_fontSize(size);
+    txt->set_alignment(TMPro::TextAlignmentOptions::Center);
+    txt->set_enableWordWrapping(true);
+    return txt;
+}
+static auto PageButton(UnityEngine::Transform* p, const std::string& label,
+                       float x, float y, float w, std::function<void()> cb) {
+    return BSML::Lite::CreateUIButton(p, label, {x, y}, {w, 8.0f}, cb);
+}
+
 static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
                          UnityW<TMPro::TMP_Text>& status, UnityW<TMPro::TMP_Text>& queue,
                          UnityW<TMPro::TMP_Text>& input) {
     INFO("TwitchBSR: BuildBsrPage called");
     if (!firstActivation) { RefreshPageText(); return; }
 
-    // Use the scrollable settings container's built-in vertical layout.
-    // Avoid horizontal rows of full-size BSML buttons: on Quest those
-    // controls have a large minimum width and overlap neighbouring buttons.
-    auto container = BSML::Lite::CreateScrollableSettingsContainer(self->get_transform());
-    auto parent = container->get_transform();
-    input = BSML::Lite::CreateText(parent, "Channel: " + g_username);
-
-    auto home = BSML::Lite::CreateVerticalLayoutGroup(parent);
-    auto connection = BSML::Lite::CreateVerticalLayoutGroup(parent);
-    auto chat = BSML::Lite::CreateVerticalLayoutGroup(parent);
-    auto requests = BSML::Lite::CreateVerticalLayoutGroup(parent);
-    auto keyboard = BSML::Lite::CreateVerticalLayoutGroup(parent);
-    auto show = [home, connection, chat, requests, keyboard](int page) {
+    auto root = self->get_transform();
+    auto home = MakePage(root, "BsrHome");
+    auto conn = MakePage(root, "BsrConnection");
+    auto ch = MakePage(root, "BsrChat");
+    auto req = MakePage(root, "BsrRequests");
+    auto kb = MakePage(root, "BsrKeyboard");
+    auto show = [home, conn, ch, req, kb](int page) {
         home->get_gameObject()->SetActive(page == 0);
-        connection->get_gameObject()->SetActive(page == 1);
-        chat->get_gameObject()->SetActive(page == 2);
-        requests->get_gameObject()->SetActive(page == 3);
-        keyboard->get_gameObject()->SetActive(page == 4);
+        conn->get_gameObject()->SetActive(page == 1);
+        ch->get_gameObject()->SetActive(page == 2);
+        req->get_gameObject()->SetActive(page == 3);
+        kb->get_gameObject()->SetActive(page == 4);
     };
+    const float W = 64.0f;
 
-    // Main navigation is vertical: only three large, non-overlapping buttons.
-    BSML::Lite::CreateText(home->get_transform(), "Twitch BSR");
-    BSML::Lite::CreateUIButton(home->get_transform(), "Twitch Connection", [show] { show(1); });
-    BSML::Lite::CreateUIButton(home->get_transform(), "Chat Settings", [show] { show(2); });
-    BSML::Lite::CreateUIButton(home->get_transform(), "Song Requests", [show] { show(3); });
+    // Home: title + three buttons.
+    PageText(home, "Twitch BSR", 0, 30, 90, 8, 6.0f);
+    PageButton(home, "Twitch Connection", 0, 14, W, [show] { show(1); });
+    PageButton(home, "Chat Settings", 0, 3, W, [show] { show(2); });
+    PageButton(home, "Song Requests", 0, -8, W, [show] { show(3); });
 
-    auto conn = connection->get_transform();
-    BSML::Lite::CreateText(conn, "Twitch Connection");
-    status = BSML::Lite::CreateText(conn, StatusString());
-    BSML::Lite::CreateUIButton(conn, "Edit Channel Name", [show] { show(4); });
-    BSML::Lite::CreateUIButton(conn, "Connect / Save", [] {
+    // Connection.
+    PageText(conn, "Twitch Connection", 0, 32, 90, 8, 6.0f);
+    status = PageText(conn, StatusString(), 0, 22, 90, 7, 4.0f);
+    input = PageText(conn, "Channel: " + g_username, 0, 14, 90, 7, 4.5f);
+    PageButton(conn, "Edit Channel Name", 0, 3, W, [show] { show(4); });
+    PageButton(conn, "Connect / Save", 0, -8, W, [] {
         auto clean = TwitchIRC::SanitizeChannel(g_username);
         if (!clean) {
             g_statusOverride = "Invalid channel name";
@@ -262,16 +292,16 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         }
         RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(conn, "Disconnect", [] {
+    PageButton(conn, "Disconnect", -17, -19, 30, [] {
         TwitchIRC::Get().Disconnect();
         g_statusOverride = "Disconnected";
         RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(conn, "Back", [show] { show(0); });
+    PageButton(conn, "Back", 17, -19, 30, [show] { show(0); });
 
-    auto ch = chat->get_transform();
-    BSML::Lite::CreateText(ch, "Chat Settings");
-    BSML::Lite::CreateToggle(ch, "Show Chat Overlay", g_showChat, [](bool enabled) {
+    // Chat settings.
+    PageText(ch, "Chat Settings", 0, 30, 90, 8, 6.0f);
+    BSML::Lite::CreateToggle(ch, "Show Chat Overlay", g_showChat, {0.0f, 17.0f}, [](bool enabled) {
         g_showChat = enabled;
         SaveConfig();
         if (!enabled) {
@@ -280,65 +310,65 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
             BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
         }
     });
-    BSML::Lite::CreateUIButton(ch, "Test Chat Overlay", [] {
+    PageButton(ch, "Test Chat Overlay", 0, 4, W, [] {
         g_lines.push_back("<color=#9146FF>TEST:</color> Chat overlay test");
         while ((int)g_lines.size() > g_maxLines) g_lines.pop_front();
         BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
     });
-    BSML::Lite::CreateUIButton(ch, "Reposition Chat", [] {
+    PageButton(ch, "Reposition Chat", 0, -7, W, [] {
         BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
     });
-    BSML::Lite::CreateUIButton(ch, "Back", [show] { show(0); });
+    PageButton(ch, "Back", 0, -18, W, [show] { show(0); });
 
-    auto req = requests->get_transform();
-    BSML::Lite::CreateText(req, "Song Requests");
-    BSML::Lite::CreateToggle(req, "Enable BSR", BsrQueue::Get().enabled,
+    // Song requests.
+    PageText(req, "Song Requests", 0, 32, 90, 8, 6.0f);
+    BSML::Lite::CreateToggle(req, "Enable BSR", BsrQueue::Get().enabled, {0.0f, 22.0f},
         [](bool enabled) { BsrQueue::Get().enabled = enabled; });
-    queue = BSML::Lite::CreateText(req, "Queue empty");
-    BSML::Lite::CreateUIButton(req, "Download Queued Songs", [] {
+    queue = PageText(req, "Queue empty", 0, 8, 90, 18, 3.8f);
+    PageButton(req, "Download Queued", -17, -6, 32, [] {
         BsrQueue::Get().DownloadAll();
         RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(req, "Play Last Download", [] {
+    PageButton(req, "Play Last Download", 17, -6, 32, [] {
         BSML::MainThreadScheduler::Schedule([] { PlayLatestDownloaded(); });
     });
-    BSML::Lite::CreateUIButton(req, "Clear Queue", [] {
+    PageButton(req, "Clear Queue", -17, -17, 32, [] {
         BsrQueue::Get().Clear();
         RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(req, "Back", [show] { show(0); });
+    PageButton(req, "Back", 17, -17, 32, [show] { show(0); });
 
-    // A full keyboard cannot fit BSML Lite's default button widths in a
-    // horizontal row on Quest. Show six vertical keys per page instead.
-    auto kb = keyboard->get_transform();
-    BSML::Lite::CreateText(kb, "Edit Channel");
-    auto pages = std::make_shared<std::vector<UnityEngine::GameObject*>>();
+    // Keyboard: 12 keys per page in a 6x2 grid, then a fixed control block.
+    PageText(kb, "Edit Channel", 0, 34, 90, 7, 5.0f);
+    g_kbInputs.push_back(PageText(kb, "Channel: " + g_username, 0, 26, 90, 7, 4.5f));
+    auto keyButtons = std::make_shared<std::vector<UnityEngine::GameObject*>>();
     const std::string keys = "abcdefghijklmnopqrstuvwxyz0123456789_-";
-    for (size_t offset = 0; offset < keys.size(); offset += 6) {
-        auto group = BSML::Lite::CreateVerticalLayoutGroup(kb);
-        pages->push_back(group->get_gameObject());
-        for (char c : keys.substr(offset, 6)) {
-            BSML::Lite::CreateUIButton(group->get_transform(), std::string(1, c),
-                [c] { TypeKey(c); });
-        }
+    for (size_t i = 0; i < keys.size(); ++i) {
+        char c = keys[i];
+        size_t slot = i % 12;
+        float x = -27.5f + (slot % 6) * 11.0f;
+        float y = (slot < 6) ? 15.0f : 5.0f;
+        auto button = PageButton(kb, std::string(1, c), x, y, 10, [c] { TypeKey(c); });
+        keyButtons->push_back(button->get_gameObject());
     }
+    const size_t kPages = (keys.size() + 11) / 12;
     auto pageIndex = std::make_shared<size_t>(0);
-    auto setPage = [pages, pageIndex](size_t page) {
+    auto setPage = [keyButtons, pageIndex](size_t page) {
         *pageIndex = page;
-        for (size_t i = 0; i < pages->size(); ++i)
-            (*pages)[i]->SetActive(i == page);
+        for (size_t i = 0; i < keyButtons->size(); ++i)
+            (*keyButtons)[i]->SetActive(i / 12 == page);
     };
-    BSML::Lite::CreateUIButton(kb, "Next Letters", [pages, pageIndex, setPage] {
-        setPage((*pageIndex + 1) % pages->size());
+    PageButton(kb, "Previous", -17, -7, 30, [pageIndex, setPage, kPages] {
+        setPage((*pageIndex + kPages - 1) % kPages);
     });
-    BSML::Lite::CreateUIButton(kb, "Previous Letters", [pages, pageIndex, setPage] {
-        setPage((*pageIndex + pages->size() - 1) % pages->size());
+    PageButton(kb, "Next", 17, -7, 30, [pageIndex, setPage, kPages] {
+        setPage((*pageIndex + 1) % kPages);
     });
-    BSML::Lite::CreateUIButton(kb, "Backspace", [] {
+    PageButton(kb, "Backspace", -17, -18, 30, [] {
         if (!g_username.empty()) g_username.pop_back();
         RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(kb, "Done", [show] { show(1); });
+    PageButton(kb, "Done", 17, -18, 30, [show] { show(1); });
     setPage(0);
     show(0);
     RefreshPageText();
