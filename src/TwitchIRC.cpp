@@ -10,6 +10,9 @@
 #include <map>
 #include <random>
 
+// Implemented in main.cpp; schedules UI work on Unity's main thread.
+void ScheduleTwitchBsrPump();
+
 using namespace TwitchBsr;
 
 TwitchIRC& TwitchIRC::Get() {
@@ -171,9 +174,12 @@ void TwitchIRC::Run(std::string channel, int gen) {
                         m.isMod = tags["mod"] == "1" || badges.find("moderator/") != std::string::npos;
                         m.isBroadcaster = badges.find("broadcaster/") != std::string::npos;
                         m.isSub = tags["subscriber"] == "1";
-                        std::lock_guard<std::mutex> l(mtx);
-                        inbox.push_back(std::move(m));
-                        if (inbox.size() > 200) inbox.pop_front();
+                        {
+                            std::lock_guard<std::mutex> l(mtx);
+                            inbox.push_back(std::move(m));
+                            if (inbox.size() > 200) inbox.pop_front();
+                        }
+                        ScheduleTwitchBsrPump();
                     }
                 }
             }

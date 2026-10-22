@@ -112,19 +112,10 @@ static void Pump() {
     RefreshOverlay();
 }
 
-// A Unity MonoBehaviour supplies per-frame updates without inline ARM64 hooks.
-// This avoids the unresolved A64HookFunction symbol entirely.
-DECLARE_CLASS_CODE(TwitchBsr, ChatPumpBehaviour, UnityEngine::MonoBehaviour,
-    DECLARE_INSTANCE_METHOD(void, Update);
-);
-DEFINE_TYPE(TwitchBsr, ChatPumpBehaviour);
-void TwitchBsr::ChatPumpBehaviour::Update() { Pump(); }
-
-static void StartChatPump() {
-    auto go = UnityEngine::GameObject::New_ctor("TwitchBsrChatPump");
-    UnityEngine::Object::DontDestroyOnLoad(go);
-    go->AddComponent<TwitchBsr::ChatPumpBehaviour*>();
-    INFO("TwitchBSR: Unity chat pump started");
+// IRC messages are delivered to Unity's main thread via BSML's scheduler.
+// No ARM64 hooks or custom IL2CPP MonoBehaviour registration are required.
+void ScheduleTwitchBsrPump() {
+    BSML::MainThreadScheduler::Schedule([] { Pump(); });
 }
 
 // ------------------------------------------------------------ BSML Lite UI --
@@ -248,7 +239,7 @@ MOD_EXTERN_FUNC void late_load() noexcept {
         "Twitch BSR", "Twitch BSR", "Twitch chat and song requests", OnModsDidActivate);
 
     INFO("TwitchBSR: menu registration finished");
-    StartChatPump();
+    INFO("TwitchBSR: event-driven chat pump enabled");
 
     BsrQueue::Get().SetOnChanged([] {
         BSML::MainThreadScheduler::Schedule([] { RefreshPageText(); });
