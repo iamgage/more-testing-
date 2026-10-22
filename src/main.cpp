@@ -5,6 +5,7 @@
 
 #include "HMUI/ViewController.hpp"
 #include "UnityEngine/Canvas.hpp"
+#include "UnityEngine/Camera.hpp"
 #include "UnityEngine/Component.hpp"
 #include "UnityEngine/MonoBehaviour.hpp"
 #include "UnityEngine/Object.hpp"
@@ -65,32 +66,44 @@ static std::string Escape(std::string s) {
 }
 
 static void EnsureOverlay() {
-    if (g_chatGo && g_chatGo->m_CachedPtr.m_value) return;  // still alive
-    g_chatGo = UnityEngine::GameObject::New_ctor("TwitchBsrChat");
-    UnityEngine::Object::DontDestroyOnLoad(g_chatGo);
-    auto canvas = g_chatGo->AddComponent<UnityEngine::Canvas*>();
-    canvas->set_renderMode(UnityEngine::RenderMode::WorldSpace);
-    auto rt = g_chatGo->GetComponent<UnityEngine::RectTransform*>();
-    rt->set_sizeDelta({120.0f, 80.0f});
-    // Left of the player, tilted slightly in; tweak to taste / expose in UI later.
-    g_chatGo->get_transform()->set_position({-2.4f, 1.6f, 2.2f});
-    g_chatGo->get_transform()->set_eulerAngles({0.0f, -25.0f, 0.0f});
-    g_chatGo->get_transform()->set_localScale({0.01f, 0.01f, 0.01f});
-    g_chatText = BSML::Lite::CreateText(g_chatGo->get_transform(), "", {0, 0}, {120.0f, 80.0f});
-    g_chatText->set_fontSize(3.0f);
-    g_chatText->set_enableWordWrapping(true);
-    g_chatText->set_richText(true);
-    g_chatText->set_enableAutoSizing(false);
+    // A chat panel must exist before the first IRC message arrives.
+    // Attach to the active player camera, not a fixed world position.
+    auto camera = UnityEngine::Camera::get_main();
+    if (!camera || !camera->m_CachedPtr.m_value) {
+        INFO("TwitchBSR: chat overlay waiting for main camera");
+        return;
+    }
+    if (!g_chatGo || !g_chatGo->m_CachedPtr.m_value) {
+        g_chatGo = UnityEngine::GameObject::New_ctor("TwitchBsrChatOverlay");
+        UnityEngine::Object::DontDestroyOnLoad(g_chatGo);
+        auto canvas = g_chatGo->AddComponent<UnityEngine::Canvas*>();
+        canvas->set_renderMode(UnityEngine::RenderMode::WorldSpace);
+        auto rt = g_chatGo->GetComponent<UnityEngine::RectTransform*>();
+        rt->set_sizeDelta({100.0f, 65.0f});
+        g_chatText = BSML::Lite::CreateText(g_chatGo->get_transform(),
+            "TWITCH CHAT\nWaiting for messages...", {0.0f, 0.0f}, {96.0f, 62.0f});
+        g_chatText->set_fontSize(4.0f);
+        g_chatText->set_enableWordWrapping(true);
+        g_chatText->set_richText(true);
+        g_chatText->set_enableAutoSizing(false);
+        INFO("TwitchBSR: chat overlay created");
+    }
+    auto transform = g_chatGo->get_transform();
+    transform->SetParent(camera->get_transform(), false);
+    transform->set_localPosition({-0.75f, 0.0f, 2.2f});
+    transform->set_localEulerAngles({0.0f, 0.0f, 0.0f});
+    transform->set_localScale({0.009f, 0.009f, 0.009f});
 }
 
 static void RefreshOverlay() {
     if (!g_showChat && !g_chatGo) return;
     EnsureOverlay();
-    if (!g_chatText) return;
+    if (!g_chatText || !g_chatGo || !g_chatGo->m_CachedPtr.m_value) return;
+    INFO("TwitchBSR: refreshing chat overlay, lines={}", g_lines.size());
     g_chatGo->SetActive(g_showChat);
     std::string all;
     for (auto& l : g_lines) all += l + "\n";
-    g_chatText->set_text(all);
+    g_chatText->set_text(all.empty() ? "TWITCH CHAT\nWaiting for messages..." : all);
 }
 
 // Runs on the Unity main thread (hooked below).
@@ -124,22 +137,9 @@ void ScheduleTwitchBsrPump() {
 // Construct native Quest BSML Lite controls, matching Darth Maul's approach.
 static std::string g_statusOverride;
 static void RefreshPageText();
-// Multi-tap keyboard: tap a group repeatedly to cycle its characters.
-static int g_lastGroup = -1;
-static std::chrono::steady_clock::time_point g_lastKeyTime{};
-static size_t g_groupIndex = 0;
-static void TypeGroup(int group, const std::string& chars) {
-    auto now = std::chrono::steady_clock::now();
-    if (g_lastGroup == group && !g_username.empty() &&
-        now - g_lastKeyTime < std::chrono::milliseconds(1100)) {
-        g_groupIndex = (g_groupIndex + 1) % chars.size();
-        g_username.back() = chars[g_groupIndex];
-    } else if (g_username.size() < 25) {
-        g_groupIndex = 0;
-        g_username.push_back(chars[0]);
-    }
-    g_lastGroup = group;
-    g_lastKeyTime = now;
+// One character per key; no multi-tap ambiguity.
+static void TypeKey(char c) {
+    if (g_username.size() < 25) g_username.push_back(c);
     RefreshPageText();
 }
 
@@ -176,28 +176,31 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
                          UnityW<TMPro::TMP_Text>& status, UnityW<TMPro::TMP_Text>& queue,
                          UnityW<TMPro::TMP_Text>& input) {
     INFO("TwitchBSR: BuildBsrPage called");
-    if (!firstActivation) { RefreshPageText(); return; }
+    if (!firstActivation) { RefreshPageText(); RefreshOverlay(); return; }
     auto container = BSML::Lite::CreateScrollableSettingsContainer(self->get_transform());
     auto parent = container->get_transform();
-    BSML::Lite::CreateText(parent, "TWITCH BSR | Channel and requests");
-    BSML::Lite::CreateText(parent, "CHANNEL (tap a key again to cycle letters)");
+    BSML::Lite::CreateText(parent, "TWITCH BSR");
     input = BSML::Lite::CreateText(parent, "Channel: " + g_username);
-    // A compact multi-tap keyboard avoids stacking 38 full-width buttons.
-    // Each group cycles its characters on repeated taps within 1.1 seconds.
-    const std::string groups[] = {"abc", "def", "ghi", "jkl", "mno", "pqrs", "tuv", "wxyz", "0123456789", "_-"};
-    const char* labels[] = {"ABC", "DEF", "GHI", "JKL", "MNO", "PQRS", "TUV", "WXYZ", "0-9", "_ / -"};
-    for (int i = 0; i < 10; ++i) {
-        BSML::Lite::CreateUIButton(parent, labels[i], [i, chars = groups[i]] { TypeGroup(i, chars); });
+    // A dedicated row for each QWERTY keyboard line. Unlike the old
+    // multi-tap UI, every key inserts exactly its displayed character.
+    BSML::Lite::CreateText(parent, "TWITCH CHANNEL KEYBOARD");
+    const char* rows[] = {"qwertyuiop", "asdfghjkl", "zxcvbnm", "0123456789", "_-"};
+    for (const char* keys : rows) {
+        auto row = BSML::Lite::CreateHorizontalLayoutGroup(parent);
+        for (const char* k = keys; *k; ++k) {
+            const char c = *k;
+            BSML::Lite::CreateUIButton(row->get_transform(), std::string(1, c), [c] { TypeKey(c); });
+        }
     }
-    BSML::Lite::CreateUIButton(parent, "Backspace", [] {
+    auto edits = BSML::Lite::CreateHorizontalLayoutGroup(parent);
+    BSML::Lite::CreateUIButton(edits->get_transform(), "Backspace", [] {
         if (!g_username.empty()) g_username.pop_back();
-        g_lastGroup = -1;
         RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(parent, "Clear", [] {
-        g_username.clear(); g_lastGroup = -1; RefreshPageText();
+    BSML::Lite::CreateUIButton(edits->get_transform(), "Clear", [] {
+        g_username.clear(); RefreshPageText();
     });
-    BSML::Lite::CreateText(parent, "TWITCH CONNECTION");
+    BSML::Lite::CreateText(parent, "CONNECTION");
     BSML::Lite::CreateUIButton(parent, "Connect / Save", [] {
         auto clean = TwitchIRC::SanitizeChannel(g_username);
         if (!clean) {
@@ -209,7 +212,6 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
             g_statusOverride = started ? "Connecting to #" + g_username + "..." : "Connection rejected";
             INFO("TwitchBSR: connect pressed, channel={}, started={}", g_username, started);
         }
-        g_lastGroup = -1;
         RefreshPageText();
     });
     BSML::Lite::CreateUIButton(parent, "Disconnect", [] {
@@ -218,12 +220,24 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         RefreshPageText();
     });
     status = BSML::Lite::CreateText(parent, StatusString());
-    BSML::Lite::CreateText(parent, "CHAT AND BSR");
+    BSML::Lite::CreateText(parent, "CHAT OVERLAY");
+    BSML::Lite::CreateUIButton(parent, "Show / Reposition Chat", [] {
+        g_showChat = true;
+        SaveConfig();
+        RefreshOverlay();
+    });
+    BSML::Lite::CreateUIButton(parent, "Test Chat Overlay", [] {
+        g_showChat = true;
+        SaveConfig();
+        g_lines.push_back("<color=#9146FF>TEST:</color> Chat overlay is visible!");
+        while ((int)g_lines.size() > g_maxLines) g_lines.pop_front();
+        RefreshOverlay();
+    });
     BSML::Lite::CreateToggle(parent, "Enable BSR requests", BsrQueue::Get().enabled,
         [](bool enabled) { BsrQueue::Get().enabled = enabled; });
     BSML::Lite::CreateToggle(parent, "Show chat overlay", g_showChat,
         [](bool enabled) { g_showChat = enabled; SaveConfig(); RefreshOverlay(); });
-    BSML::Lite::CreateText(parent, "SONG REQUEST QUEUE");
+    BSML::Lite::CreateText(parent, "REQUEST QUEUE");
     queue = BSML::Lite::CreateText(parent, "Queue empty");
     BSML::Lite::CreateUIButton(parent, "Download all", [] {
         BsrQueue::Get().DownloadAll(); RefreshPageText();
@@ -232,6 +246,7 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         BsrQueue::Get().Clear(); RefreshPageText();
     });
     RefreshPageText();
+    RefreshOverlay();
 }
 static void OnSettingsDidActivate(HMUI::ViewController* self, bool firstActivation,
                                   bool addedToHierarchy, bool screenSystemEnabling) {
@@ -261,6 +276,7 @@ MOD_EXTERN_FUNC void late_load() noexcept {
 
     INFO("TwitchBSR: menu registration finished");
     INFO("TwitchBSR: event-driven chat pump enabled");
+    BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
 
     BsrQueue::Get().SetOnChanged([] {
         BSML::MainThreadScheduler::Schedule([] { RefreshPageText(); });
