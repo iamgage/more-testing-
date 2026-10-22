@@ -1,6 +1,6 @@
 #pragma once
+#include "paper2_scotland2/shared/logger.hpp"
 #include "beatsaber-hook/shared/utils/hooking.hpp"
-#include "beatsaber-hook/shared/utils/logging.hpp"
 #include "scotland2/shared/loader.hpp"
 
 #ifndef MOD_ID
@@ -10,5 +10,5 @@
 #define VERSION "0.1.0"
 #endif
 
-Logger& getLogger();
-#define INFO(...) getLogger().info(__VA_ARGS__)
+constexpr auto Logger = Paper::ConstLoggerContext(MOD_ID);
+#define INFO(...) Logger.info(__VA_ARGS__)

@@ -26,5 +26,5 @@ which is the one thing you asked to avoid.
 This was written without compiling. Most likely trouble spots:
 - Dependency version ranges in `qpm.json`
 - BSML API names (`RegisterSettingsMenu`, `Lite::CreateText`, `NotifyChange`, `MainThreadScheduler`)
-- SongCore refresh call and `web-utils` response types
+- SongCore refresh call and `web-utils` response types (zip extraction now uses the NDK zlib, no extra package)
 - Hook targets `SongPreviewPlayer::Update` / `AudioTimeSyncController::Update` used as the main-thread pump

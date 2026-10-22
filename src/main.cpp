@@ -23,7 +23,6 @@
 using namespace TwitchBsr;
 
 static modloader::ModInfo modInfo{MOD_ID, VERSION, 0};
-Logger& getLogger() { static Logger* l = new Logger(modInfo); return *l; }
 
 // ---------------------------------------------------------------- config --
 // Stored as a tiny text file: line 1 = twitch username, line 2 = show chat (0/1)
@@ -115,8 +114,8 @@ DECLARE_CLASS_CODEGEN(TwitchBsr, SettingsHost, UnityEngine::MonoBehaviour,
     DECLARE_INSTANCE_FIELD(StringW, username);
     DECLARE_INSTANCE_FIELD(bool, showChat);
     DECLARE_INSTANCE_FIELD(bool, bsrEnabled);
-    DECLARE_INSTANCE_FIELD(StringW, status);
-    DECLARE_INSTANCE_FIELD(StringW, queueText);
+    DECLARE_INSTANCE_FIELD(TMPro::TextMeshProUGUI*, statusText);
+    DECLARE_INSTANCE_FIELD(TMPro::TextMeshProUGUI*, queueTextUi);
     DECLARE_INSTANCE_METHOD(void, OnConnect);
     DECLARE_INSTANCE_METHOD(void, OnDisconnect);
     DECLARE_INSTANCE_METHOD(void, OnDownloadAll);
@@ -128,25 +127,28 @@ DEFINE_TYPE(TwitchBsr, SettingsHost);
 
 static TwitchBsr::SettingsHost* g_host = nullptr;
 
+static std::string g_statusOverride;
+
 void TwitchBsr::SettingsHost::Refresh() {
     auto& irc = TwitchIRC::Get();
-    status = irc.IsConnected() ? StringW("Connected to #" + irc.Channel())
-                               : StringW("Not connected");
+    std::string st = !g_statusOverride.empty() ? g_statusOverride
+                   : irc.IsConnected() ? "Connected to #" + irc.Channel() : "Not connected";
     std::string q;
     int i = 1;
     for (auto& r : BsrQueue::Get().Snapshot())
         q += std::to_string(i++) + ". " + r.songName + " [" + r.key + "] - " + r.requester + "\n";
     if (q.empty()) q = "(queue empty - viewers type !bsr <key>)";
-    queueText = q;
-    BSML::MainThreadScheduler::Schedule([this] { BSML::Helpers::NotifyChange(this, {"status", "queueText"}); });
+    if (statusText) statusText->set_text(st);
+    if (queueTextUi) queueTextUi->set_text(q);
 }
 void TwitchBsr::SettingsHost::OnConnect() {
     g_username = std::string(username);
-    if (!TwitchIRC::Get().Connect(g_username)) status = "Invalid Twitch username";
-    else { SaveConfig(); status = "Connecting..."; }
+    g_statusOverride.clear();
+    if (!TwitchIRC::Get().Connect(g_username)) g_statusOverride = "Invalid Twitch username";
+    else { SaveConfig(); g_statusOverride = "Connecting..."; }
     Refresh();
 }
-void TwitchBsr::SettingsHost::OnDisconnect() { TwitchIRC::Get().Disconnect(); Refresh(); }
+void TwitchBsr::SettingsHost::OnDisconnect() { g_statusOverride.clear(); TwitchIRC::Get().Disconnect(); Refresh(); }
 void TwitchBsr::SettingsHost::OnDownloadAll() { BsrQueue::Get().DownloadAll(); }
 void TwitchBsr::SettingsHost::OnClearQueue() { BsrQueue::Get().Clear(); Refresh(); }
 void TwitchBsr::SettingsHost::OnToggled() {
@@ -166,11 +168,11 @@ static const char* kBsml = R"(
       <button text='Connect' on-click='OnConnect'/>
       <button text='Disconnect' on-click='OnDisconnect'/>
     </horizontal>
-    <text text='~status' align='Center' font-size='3.5'/>
+    <text id='statusText' text='...' align='Center' font-size='3.5'/>
     <toggle-setting text='Show chat in game' value='showChat' apply-on-change='true' on-change='OnToggled'/>
     <toggle-setting text='Enable !bsr requests' value='bsrEnabled' apply-on-change='true' on-change='OnToggled'/>
     <text text='Song queue' font-size='4' align='Center'/>
-    <text text='~queueText' align='TopLeft' font-size='3' word-wrapping='true'/>
+    <text id='queueTextUi' text='...' align='TopLeft' font-size='3' word-wrapping='true'/>
     <horizontal spacing='2'>
       <button text='Download all' on-click='OnDownloadAll'/>
       <button text='Clear queue' on-click='OnClearQueue'/>
@@ -185,8 +187,8 @@ static void OnSettingsDidActivate(UnityEngine::GameObject* root, bool firstActiv
     g_host->username = g_username;
     g_host->showChat = g_showChat;
     g_host->bsrEnabled = BsrQueue::Get().enabled;
+    BSML::parse_and_construct(kBsml, root->get_transform(), g_host);
     g_host->Refresh();
-    BSML::parse(kBsml, root, g_host);
 }
 
 // ----------------------------------------------------------------- entry ----
@@ -196,13 +198,14 @@ MOD_EXTERN_FUNC void setup(CModInfo* info) noexcept {
 }
 
 MOD_EXTERN_FUNC void late_load() noexcept {
+    Paper::Logger::RegisterFileContextId(MOD_ID);
     il2cpp_functions::Init();
     custom_types::Register::AutoRegister();
     BSML::Init();
     BSML::Register::RegisterSettingsMenu("Twitch BSR", OnSettingsDidActivate);  // adjust to your BSML version
 
-    INSTALL_HOOK(getLogger(), Preview_Update);
-    INSTALL_HOOK(getLogger(), Sync_Update);
+    INSTALL_HOOK(Logger, Preview_Update);
+    INSTALL_HOOK(Logger, Sync_Update);
 
     BsrQueue::Get().SetOnChanged([] {
         BSML::MainThreadScheduler::Schedule([] { if (g_host) g_host->Refresh(); });

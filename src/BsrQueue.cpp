@@ -5,11 +5,14 @@
 #include <filesystem>
 #include <regex>
 
+#include <future>
+#include <thread>
+
+#include "ZipExtract.hpp"
 #include "beatsaber-hook/shared/rapidjson/include/rapidjson/document.h"
-#include "beatsaber-hook/shared/utils/logging.hpp"
+#include "main.hpp"
 #include "songcore/shared/SongCore.hpp"
 #include "web-utils/shared/WebUtils.hpp"
-#include "zip.h"
 
 using namespace TwitchBsr;
 
@@ -70,34 +73,38 @@ bool BsrQueue::HandleChat(const std::string& user, const std::string& text, bool
     return false;
 }
 
-void BsrQueue::Resolve(std::string key, std::string user) {
-    WebUtils::URLOptions opts;
-    opts.url = "https://api.beatsaver.com/maps/id/" + key;
-    WebUtils::GetAsync<WebUtils::StringResponse>(opts).attach_continuation(
-        [this, key, user](std::future<WebUtils::StringResponse> fut) {
-            auto resp = fut.get();
-            if (!resp.IsSuccessful() || !resp.responseData) return;
-            rapidjson::Document d;
-            d.Parse(resp.responseData->c_str());
-            if (d.HasParseError() || !d.IsObject() || !d.HasMember("versions")) return;
-            auto& v = d["versions"];
-            if (!v.IsArray() || v.Empty()) return;
+static std::string Str(const rapidjson::Value& v, const char* k) {
+    if (v.IsObject() && v.HasMember(k) && v[k].IsString()) return v[k].GetString();
+    return {};
+}
 
-            SongRequest r;
-            r.key = key;
-            r.requester = user;
-            r.songName = d["name"].GetString();
-            r.mapper = d["uploader"]["name"].GetString();
-            if (d.HasMember("metadata") && d["metadata"].HasMember("songAuthorName"))
-                r.songAuthor = d["metadata"]["songAuthorName"].GetString();
-            r.hash = v[0]["hash"].GetString();
-            r.downloadUrl = v[0]["downloadURL"].GetString();
-            {
-                std::lock_guard<std::mutex> l(mtx);
-                queue.push_back(std::move(r));
-            }
-            if (onChanged) onChanged();
-        });
+void BsrQueue::Resolve(std::string key, std::string user) {
+    std::thread([this, key, user] {
+        WebUtils::URLOptions opts;
+        opts.url = "https://api.beatsaver.com/maps/id/" + key;
+        auto resp = WebUtils::GetAsync<WebUtils::StringResponse>(opts).get();
+        if (!resp.IsSuccessful() || !resp.responseData) return;
+        rapidjson::Document d;
+        d.Parse(resp.responseData->c_str());
+        if (d.HasParseError() || !d.IsObject() || !d.HasMember("versions")) return;
+        auto& v = d["versions"];
+        if (!v.IsArray() || v.Empty()) return;
+
+        SongRequest r;
+        r.key = key;
+        r.requester = user;
+        r.songName = Str(d, "name");
+        if (d.HasMember("uploader")) r.mapper = Str(d["uploader"], "name");
+        if (d.HasMember("metadata")) r.songAuthor = Str(d["metadata"], "songAuthorName");
+        r.hash = Str(v[0], "hash");
+        r.downloadUrl = Str(v[0], "downloadURL");
+        if (r.downloadUrl.empty()) return;
+        {
+            std::lock_guard<std::mutex> l(mtx);
+            queue.push_back(std::move(r));
+        }
+        if (onChanged) onChanged();
+    }).detach();
 }
 
 std::vector<SongRequest> BsrQueue::Snapshot() {
@@ -124,15 +131,14 @@ void BsrQueue::Download(const SongRequest& req) {
     auto resp = WebUtils::GetAsync<WebUtils::DataResponse>(opts).get();
     if (!resp.IsSuccessful() || !resp.responseData) return;
 
-    // Sanitise folder name: "<key> (<song> - <mapper>)"
+    // Folder name: "<key> (<song> - <mapper>)", with illegal characters replaced.
     std::string name = req.key + " (" + req.songName + " - " + req.mapper + ")";
     for (char& c : name)
         if (std::string("<>:\"/\\|?*").find(c) != std::string::npos) c = '_';
     std::string dir = std::string(kCustomLevels) + name;
-    std::filesystem::create_directories(dir);
     auto& data = *resp.responseData;
-    int rc = zip_stream_extract((const char*)data.data(), data.size(), dir.c_str(), nullptr, nullptr);
-    if (rc != 0) INFO("zip extract failed for {} ({})", req.key, rc);
+    if (!TwitchBsr::ExtractZip((const uint8_t*)data.data(), data.size(), dir))
+        INFO("zip extract failed for {}", req.key);
 }
 
 void BsrQueue::DownloadAll() {
