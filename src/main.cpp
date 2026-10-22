@@ -163,48 +163,32 @@ void TwitchBsr::SettingsHost::OnToggled() {
     RefreshOverlay();
 }
 
+// Use basic BSML components rather than tabs; older Quest BSML builds can fail
+// parsing a tab-selector and prevent the entire settings screen from appearing.
 static const char* kBsml = R"(
-<bg xmlns='https://monkeymanboy.github.io/BSML-Docs/'
-    xsi:schemaLocation='https://monkeymanboy.github.io/BSML-Docs/ https://raw.githubusercontent.com/monkeymanboy/BSML-Docs/gh-pages/BSMLSchema.xsd'>
-  <vertical child-control-height='false' child-expand-height='false' spacing='1' pad='2'>
-    <text text='BSR' font-size='6' align='Center'/>
-    <tab-selector tab-tag='bsrtabs'/>
-
-    <tab tags='bsrtabs' tab-name='Twitch'>
-      <vertical child-control-height='false' child-expand-height='false' spacing='1' pad='2'>
-        <string-setting text='Twitch username' value='username' apply-on-change='true' hover-hint='Just the channel name, no token needed'/>
-        <horizontal spacing='2'>
-          <button text='Connect' on-click='OnConnect'/>
-          <button text='Disconnect' on-click='OnDisconnect'/>
-        </horizontal>
-        <text id='statusText' text='...' align='Center' font-size='3.5'/>
-      </vertical>
-    </tab>
-
-    <tab tags='bsrtabs' tab-name='Requests'>
-      <vertical child-control-height='false' child-expand-height='false' spacing='1' pad='2'>
-        <toggle-setting text='Enable !bsr requests' value='bsrEnabled' apply-on-change='true' on-change='OnToggled'/>
-        <text text='Song queue' font-size='4' align='Center'/>
-        <text id='queueTextUi' text='...' align='TopLeft' font-size='3' word-wrapping='true'/>
-        <horizontal spacing='2'>
-          <button text='Download all' on-click='OnDownloadAll'/>
-          <button text='Clear queue' on-click='OnClearQueue'/>
-        </horizontal>
-      </vertical>
-    </tab>
-
-    <tab tags='bsrtabs' tab-name='Chat'>
-      <vertical child-control-height='false' child-expand-height='false' spacing='1' pad='2'>
-        <toggle-setting text='Show chat in game' value='showChat' apply-on-change='true' on-change='OnToggled'/>
-      </vertical>
-    </tab>
-  </vertical>
-</bg>
+<vertical child-control-height='false' child-expand-height='false' spacing='1' pad='2'>
+  <text text='Twitch BSR' font-size='6' align='Center'/>
+  <text text='Twitch channel (without #)' font-size='3.5'/>
+  <string-setting text='Channel' value='username' apply-on-change='true'/>
+  <horizontal spacing='2'>
+    <button text='Connect' on-click='OnConnect'/>
+    <button text='Disconnect' on-click='OnDisconnect'/>
+  </horizontal>
+  <text id='statusText' text='Not connected' font-size='3.5'/>
+  <toggle-setting text='Enable !bsr requests' value='bsrEnabled' apply-on-change='true' on-change='OnToggled'/>
+  <toggle-setting text='Show chat in game' value='showChat' apply-on-change='true' on-change='OnToggled'/>
+  <text text='Song request queue' font-size='4'/>
+  <text id='queueTextUi' text='Queue empty' font-size='3' word-wrapping='true'/>
+  <horizontal spacing='2'>
+    <button text='Download all' on-click='OnDownloadAll'/>
+    <button text='Clear queue' on-click='OnClearQueue'/>
+  </horizontal>
+</vertical>
 )";
 
 static void OnSettingsDidActivate(HMUI::ViewController* self, bool firstActivation, bool addedToHierarchy, bool screenSystemEnabling) {
     auto root = self->get_gameObject();
-    if (!firstActivation) { if (g_host) g_host->Refresh(); return; }
+    if (g_host && !firstActivation) { g_host->Refresh(); return; }
     g_host = root->AddComponent<TwitchBsr::SettingsHost*>();
     g_host->username = g_username;
     g_host->showChat = g_showChat;
