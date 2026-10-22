@@ -26,6 +26,8 @@
 
 #include <deque>
 #include <fstream>
+#include <filesystem>
+#include <chrono>
 
 using namespace TwitchBsr;
 
@@ -47,6 +49,7 @@ static void LoadConfig() {
     g_showChat = (b != "0");
 }
 static void SaveConfig() {
+    std::filesystem::create_directories("/sdcard/ModData/com.beatgames.beatsaber/Configs");
     std::ofstream f(kCfg, std::ios::trunc);
     f << g_username << "\n" << (g_showChat ? "1" : "0") << "\n";
 }
@@ -91,7 +94,14 @@ static void RefreshOverlay() {
 }
 
 // Runs on the Unity main thread (hooked below).
+static void RefreshPageText();
 static void Pump() {
+    static auto lastRefresh = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    if (now - lastRefresh > std::chrono::seconds(1)) {
+        lastRefresh = now;
+        RefreshPageText();
+    }
     auto msgs = TwitchIRC::Get().Drain();
     if (msgs.empty()) return;
     for (auto& m : msgs) {
@@ -122,11 +132,13 @@ static UnityW<TMPro::TMP_Text> g_settingsStatus;
 static UnityW<TMPro::TMP_Text> g_modsStatus;
 static UnityW<TMPro::TMP_Text> g_settingsQueue;
 static UnityW<TMPro::TMP_Text> g_modsQueue;
+static UnityW<TMPro::TMP_Text> g_settingsInput;
+static UnityW<TMPro::TMP_Text> g_modsInput;
 
 static std::string StatusString() {
     auto& irc = TwitchIRC::Get();
-    return !g_statusOverride.empty() ? g_statusOverride :
-        (irc.IsConnected() ? "Connected to #" + irc.Channel() : "Not connected");
+    if (irc.IsConnected()) return "Connected to #" + irc.Channel();
+    return g_statusOverride.empty() ? "Not connected" : g_statusOverride;
 }
 static std::string QueueString() {
     std::string out;
@@ -136,49 +148,84 @@ static std::string QueueString() {
     return out.empty() ? "Queue empty (viewers: !bsr <key>)" : out;
 }
 static void RefreshPageText() {
+    if (g_settingsInput.isAlive()) g_settingsInput->set_text("Channel: " + g_username + "_");
+    if (g_modsInput.isAlive()) g_modsInput->set_text("Channel: " + g_username + "_");
     if (g_settingsStatus.isAlive()) g_settingsStatus->set_text(StatusString());
     if (g_modsStatus.isAlive()) g_modsStatus->set_text(StatusString());
     if (g_settingsQueue.isAlive()) g_settingsQueue->set_text(QueueString());
     if (g_modsQueue.isAlive()) g_modsQueue->set_text(QueueString());
 }
 static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
-                         UnityW<TMPro::TMP_Text>& status, UnityW<TMPro::TMP_Text>& queue) {
+                         UnityW<TMPro::TMP_Text>& status, UnityW<TMPro::TMP_Text>& queue,
+                         UnityW<TMPro::TMP_Text>& input) {
     INFO("TwitchBSR: BuildBsrPage called");
     if (!firstActivation) { RefreshPageText(); return; }
     auto container = BSML::Lite::CreateScrollableSettingsContainer(self->get_transform());
     auto parent = container->get_transform();
-    BSML::Lite::CreateText(parent, "TWITCH BSR | CHAT + REQUESTS");
-    BSML::Lite::CreateText(parent, "Connect your channel to show Twitch chat and receive !bsr requests.");
-    BSML::Lite::CreateText(parent, "Twitch channel (no #):");
-    BSML::Lite::CreateStringSetting(parent, "Channel", g_username,
-        [](StringW value) { g_username = std::string(value); SaveConfig(); });
-    BSML::Lite::CreateUIButton(parent, "Connect", [] {
-        g_statusOverride.clear();
-        if (g_username.empty() || !TwitchIRC::Get().Connect(g_username))
-            g_statusOverride = "Enter a valid channel name";
-        else { SaveConfig(); g_statusOverride = "Connecting..."; }
+    BSML::Lite::CreateText(parent, "TWITCH BSR");
+    BSML::Lite::CreateText(parent, "TWITCH CHANNEL");
+    input = BSML::Lite::CreateText(parent, "Channel: " + g_username + "_");
+    // Buttons avoid Beat Saber's restricted string-entry keyboard.
+    // Individual character controls also work on older BSML Lite versions.
+    const std::string keys = "abcdefghijklmnopqrstuvwxyz0123456789_-";
+    for (char ch : keys) {
+        BSML::Lite::CreateUIButton(parent, std::string(1, ch), [ch] {
+            if (g_username.size() < 25) g_username += ch;
+            RefreshPageText();
+        });
+    }
+    BSML::Lite::CreateUIButton(parent, "Backspace", [] {
+        if (!g_username.empty()) g_username.pop_back();
+        RefreshPageText();
+    });
+    BSML::Lite::CreateUIButton(parent, "Clear channel", [] {
+        g_username.clear(); RefreshPageText();
+    });
+    BSML::Lite::CreateUIButton(parent, "Save channel", [] {
+        SaveConfig(); g_statusOverride = "Channel saved"; RefreshPageText();
+    });
+    BSML::Lite::CreateText(parent, "CONNECTION");
+    BSML::Lite::CreateUIButton(parent, "Connect to Twitch", [] {
+        auto clean = TwitchIRC::SanitizeChannel(g_username);
+        if (!clean) {
+            g_statusOverride = "Invalid channel (3-25 letters, numbers, _)";
+        } else {
+            g_username = *clean;
+            SaveConfig();
+            bool started = TwitchIRC::Get().Connect(g_username);
+            g_statusOverride = started ? "Connecting to #" + g_username + "..." : "Connection rejected";
+            INFO("TwitchBSR: connect pressed, channel={}, started={}", g_username, started);
+        }
         RefreshPageText();
     });
     BSML::Lite::CreateUIButton(parent, "Disconnect", [] {
-        TwitchIRC::Get().Disconnect(); g_statusOverride.clear(); RefreshPageText();
+        TwitchIRC::Get().Disconnect();
+        g_statusOverride = "Disconnected";
+        RefreshPageText();
     });
     status = BSML::Lite::CreateText(parent, StatusString());
-    BSML::Lite::CreateToggle(parent, "Enable !bsr requests", BsrQueue::Get().enabled,
+    BSML::Lite::CreateText(parent, "OPTIONS");
+    BSML::Lite::CreateToggle(parent, "Enable BSR requests", BsrQueue::Get().enabled,
         [](bool enabled) { BsrQueue::Get().enabled = enabled; });
-    BSML::Lite::CreateToggle(parent, "Show chat in game", g_showChat,
+    BSML::Lite::CreateToggle(parent, "Show chat", g_showChat,
         [](bool enabled) { g_showChat = enabled; SaveConfig(); RefreshOverlay(); });
     BSML::Lite::CreateText(parent, "REQUEST QUEUE");
-    queue = BSML::Lite::CreateText(parent, QueueString());
-    BSML::Lite::CreateUIButton(parent, "Download all", [] { BsrQueue::Get().DownloadAll(); RefreshPageText(); });
-    BSML::Lite::CreateUIButton(parent, "Clear queue", [] { BsrQueue::Get().Clear(); RefreshPageText(); });
+    queue = BSML::Lite::CreateText(parent, "Queue: see below");
+    BSML::Lite::CreateUIButton(parent, "Download all", [] {
+        BsrQueue::Get().DownloadAll(); RefreshPageText();
+    });
+    BSML::Lite::CreateUIButton(parent, "Clear queue", [] {
+        BsrQueue::Get().Clear(); RefreshPageText();
+    });
+    RefreshPageText();
 }
 static void OnSettingsDidActivate(HMUI::ViewController* self, bool firstActivation,
                                   bool addedToHierarchy, bool screenSystemEnabling) {
-    BuildBsrPage(self, firstActivation, g_settingsStatus, g_settingsQueue);
+    BuildBsrPage(self, firstActivation, g_settingsStatus, g_settingsQueue, g_settingsInput);
 }
 static void OnModsDidActivate(HMUI::ViewController* self, bool firstActivation,
                               bool addedToHierarchy, bool screenSystemEnabling) {
-    BuildBsrPage(self, firstActivation, g_modsStatus, g_modsQueue);
+    BuildBsrPage(self, firstActivation, g_modsStatus, g_modsQueue, g_modsInput);
 }
 
 // ----------------------------------------------------------------- entry ----
