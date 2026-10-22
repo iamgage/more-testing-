@@ -1,0 +1,1 @@
+ChatUI-inspired native menu layout using BSML Lite. This is not ChatUI source code. Diagnostic INFO logging added at initialization, registration and UI activation. A successful build alone does not prove menu registration. Capture logcat and search TwitchBSR.

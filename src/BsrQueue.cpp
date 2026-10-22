@@ -63,9 +63,11 @@ bool BsrQueue::HandleChat(const std::string& user, const std::string& text, bool
         return true;
     }
     if (lower == "!oops") {
-        std::lock_guard<std::mutex> l(mtx);
-        for (auto it = queue.rbegin(); it != queue.rend(); ++it) {
-            if (it->requester == user) { queue.erase(std::next(it).base()); break; }
+        {
+            std::lock_guard<std::mutex> l(mtx);
+            for (auto it = queue.rbegin(); it != queue.rend(); ++it) {
+                if (it->requester == user) { queue.erase(std::next(it).base()); break; }
+            }
         }
         if (onChanged) onChanged();
         return true;
@@ -101,15 +103,12 @@ void BsrQueue::Resolve(std::string key, std::string user) {
         if (r.downloadUrl.empty()) return;
         {
             std::lock_guard<std::mutex> l(mtx);
-            queue.push_back(std::move(r));
+            queue.push_back(r);
         }
         if (onChanged) onChanged();
         // Download only the newly resolved request (not the whole queue).
-        SongRequest toDownload;
-        {
-            std::lock_guard<std::mutex> l(mtx);
-            if (!queue.empty()) toDownload = queue.back();
-        }
+        SongRequest toDownload = r;
+        toDownload.downloaded = false;
         if (!toDownload.downloadUrl.empty()) {
             Download(toDownload);
             SongCore::API::Loading::RefreshSongs(false);
@@ -124,15 +123,19 @@ std::vector<SongRequest> BsrQueue::Snapshot() {
 }
 
 void BsrQueue::Remove(const std::string& key) {
-    std::lock_guard<std::mutex> l(mtx);
-    queue.erase(std::remove_if(queue.begin(), queue.end(),
-                               [&](auto& r) { return r.key == key; }), queue.end());
+    {
+        std::lock_guard<std::mutex> l(mtx);
+        queue.erase(std::remove_if(queue.begin(), queue.end(),
+                                   [&](auto& r) { return r.key == key; }), queue.end());
+    }
     if (onChanged) onChanged();
 }
 
 void BsrQueue::Clear() {
-    std::lock_guard<std::mutex> l(mtx);
-    queue.clear();
+    {
+        std::lock_guard<std::mutex> l(mtx);
+        queue.clear();
+    }
     if (onChanged) onChanged();
 }
 
@@ -160,7 +163,11 @@ void BsrQueue::Download(const SongRequest& req) {
     {
         std::lock_guard<std::mutex> lock(mtx);
         lastDownloaded = req;
+        for (auto& queued : queue) {
+            if (queued.key == req.key) queued.downloaded = true;
+        }
     }
+    if (onChanged) onChanged();
 }
 
 void BsrQueue::DownloadAll() {

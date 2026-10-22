@@ -50,6 +50,7 @@ static constexpr const char* kCfg = "/sdcard/ModData/com.beatgames.beatsaber/Con
 static std::string g_username;
 static bool g_showChat = true;
 static int g_maxLines = 6;
+static int g_chatPosition = 0;
 
 static void LoadConfig() {
     std::ifstream f(kCfg);
@@ -106,7 +107,9 @@ static void EnsureOverlay() {
     if (canvas) canvas->set_worldCamera(camera);
     auto transform = g_chatGo->get_transform();
     transform->SetParent(camera->get_transform(), false);
-    transform->set_localPosition({-0.30f, 0.05f, 1.25f});
+    // Cycle through left, right, and centre without recreating the canvas.
+    float x = g_chatPosition == 0 ? -0.30f : (g_chatPosition == 1 ? 0.30f : 0.0f);
+    transform->set_localPosition({x, 0.05f, 1.25f});
     transform->set_localEulerAngles({0.0f, 0.0f, 0.0f});
     transform->set_localScale({0.009f, 0.009f, 0.009f});
 }
@@ -207,7 +210,7 @@ static std::string QueueString() {
     int i = 1;
     for (auto& r : BsrQueue::Get().Snapshot()) {
         if (i > 3) { out += "...more requests queued"; break; }
-        out += std::to_string(i++) + ". [" + r.key + "] " + r.requester + "\n";
+        out += std::to_string(i++) + ". [" + r.key + "] " + (r.downloaded ? "Downloaded" : "Queued") + "\n";
     }
     return out.empty() ? "Queue empty (viewers use !bsr key)" : out;
 }
@@ -317,12 +320,17 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
             }
         });
     PageButton(ch, "Test Chat Overlay", 0, 10.5f, W, [] {
+        if (!g_showChat) return;  // Respect the user's overlay visibility setting.
         g_lines.push_back("<color=#9146FF>TEST:</color> Chat overlay test");
         while ((int)g_lines.size() > g_maxLines) g_lines.pop_front();
         BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
     });
-    PageButton(ch, "Reposition Chat", 0, 1, W, [] {
-        BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
+    auto reposition = std::make_shared<UnityEngine::UI::Button*>(nullptr);
+    *reposition = PageButton(ch, "Chat Position: Left", 0, 1, W, [reposition] {
+        g_chatPosition = (g_chatPosition + 1) % 3;
+        const char* names[] = {"Left", "Right", "Centre"};
+        BSML::Lite::SetButtonText(*reposition, std::string("Chat Position: ") + names[g_chatPosition]);
+        if (g_showChat) BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
     });
     PageButton(ch, "Back", 0, -8.5f, W, [show] { show(0); });
 

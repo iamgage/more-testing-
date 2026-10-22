@@ -1,0 +1,31 @@
+{
+  "version": "0.1.0",
+  "sharedDir": "shared",
+  "dependenciesDir": "extern",
+  "info": {
+    "name": "TwitchBSR",
+    "id": "twitch-bsr",
+    "version": "0.1.0",
+    "url": null,
+    "additionalData": {
+      "overrideSoName": "libtwitch-bsr.so",
+      "cmake": true
+    }
+  },
+  "workspace": {
+    "scripts": {},
+    "qmodIncludeDirs": ["./build", "./extern/libs"],
+    "qmodIncludeFiles": [],
+    "qmodOutput": "TwitchBSR.qmod"
+  },
+  "dependencies": [
+    { "id": "beatsaber-hook", "versionRange": "^6.4.2", "additionalData": {} },
+    { "id": "bs-cordl", "versionRange": "4008.*", "additionalData": {} },
+    { "id": "custom-types", "versionRange": "^0.18.4", "additionalData": {} },
+    { "id": "scotland2", "versionRange": "^0.1.6", "additionalData": { "includeQmod": false } },
+    { "id": "bsml", "versionRange": "^0.4.55", "additionalData": {} },
+    { "id": "songcore", "versionRange": "^1.1.26", "additionalData": {} },
+    { "id": "web-utils", "versionRange": "*", "additionalData": {} },
+    { "id": "paper2_scotland2", "versionRange": "^4.6.4", "additionalData": {} }
+  ]
+}
