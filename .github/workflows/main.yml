@@ -9,32 +9,56 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
-          lfs: true
 
       - uses: seanmiddleditch/gha-setup-ninja@v3
 
-      - name: Point build at the runner's NDK
+      - name: Setup Android NDK r27c
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          link-to-sdk: true
+
+      - name: Point build at the NDK
         run: |
-          echo "$ANDROID_NDK_LATEST_HOME" > ${GITHUB_WORKSPACE}/ndkpath.txt
-          cat ${GITHUB_WORKSPACE}/ndkpath.txt
+          echo "${{ steps.ndk.outputs.ndk-path }}" > ndkpath.txt
+          cat ndkpath.txt
+
+      - name: Install qpm
+        run: |
+          mkdir -p qpm_dl
+          cd qpm_dl
+          gh release download v1.5.11 --repo QuestPackageManager/QPM.CLI --pattern '*' \
+            || gh release download --repo QuestPackageManager/QPM.CLI --pattern '*'
+          for f in *.zip; do [ -e "$f" ] && unzip -o -q "$f" -d "x_${f%.zip}"; done
+          for f in *.tar.gz; do [ -e "$f" ] && mkdir -p "x_${f%.tar.gz}" && tar -xzf "$f" -C "x_${f%.tar.gz}"; done
+          cd ..
+          FOUND=""
+          while IFS= read -r c; do
+            chmod +x "$c" 2>/dev/null || true
+            if "$c" --version >/dev/null 2>&1; then FOUND="$c"; break; fi
+          done < <(find qpm_dl -type f ! -name '*.zip' ! -name '*.tar.gz' ! -name '*.exe' ! -name '*.pdb' ! -name '*.dbg' ! -name '*.dSYM')
+          if [ -z "$FOUND" ]; then echo "No runnable qpm binary found:"; find qpm_dl -type f; exit 1; fi
+          echo "Using $FOUND"
+          sudo install -m 755 "$FOUND" /usr/local/bin/qpm
+          qpm --version
 
       - name: QPM restore
-        uses: Fernthedev/qpm-action@main
-        with:
-          workflow_token: ${{ secrets.GITHUB_TOKEN }}
-          restore: true
-          cache: true
-          publish: false
+        run: |
+          qpm restore --update || qpm restore
+          ls extern || true
 
       - name: Build native library
         run: |
           cmake -G Ninja -B build \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" \
+            -DCMAKE_TOOLCHAIN_FILE="${{ steps.ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-24
           cmake --build build -j"$(nproc)"
@@ -42,7 +66,7 @@ jobs:
 
       - name: Package qmod
         run: |
-          qpm qmod build
+          qpm qmod manifest || true
           qpm qmod zip TwitchBSR.qmod
 
       - uses: actions/upload-artifact@v4
@@ -51,8 +75,9 @@ jobs:
           path: TwitchBSR.qmod
           if-no-files-found: error
 
-      - name: Upload .so (debug)
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: libtwitch-bsr.so
           path: build/libtwitch-bsr.so
+          if-no-files-found: ignore
