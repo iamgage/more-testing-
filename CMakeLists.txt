@@ -37,8 +37,5 @@ target_link_libraries(${COMPILE_ID} PRIVATE log z)   # z = zlib from the Android
 # QPM-generated targets and libraries.
 include("${CMAKE_CURRENT_LIST_DIR}/extern.cmake")
 
-# The previous build deliberately permitted undefined A64HookFunction, which
-# produced a qmod that Scotland2 could not load. Fail at build time instead.
-# If this fails, the beatsaber-hook inline-hook implementation must be linked
-# from the actual QPM-restored package; do not mask the error with -z undefs.
+# Do not allow unresolved symbols; the chat pump uses a Unity component, not ARM64 inline hooks.
 target_link_options(${COMPILE_ID} PRIVATE "LINKER:--no-undefined")

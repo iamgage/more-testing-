@@ -3,8 +3,6 @@
 #include "BsrQueue.hpp"
 #include "TwitchIRC.hpp"
 
-#include "GlobalNamespace/AudioTimeSyncController.hpp"
-#include "GlobalNamespace/SongPreviewPlayer.hpp"
 #include "HMUI/ViewController.hpp"
 #include "UnityEngine/Canvas.hpp"
 #include "UnityEngine/Component.hpp"
@@ -114,15 +112,19 @@ static void Pump() {
     RefreshOverlay();
 }
 
-MAKE_HOOK_MATCH(Preview_Update, &GlobalNamespace::SongPreviewPlayer::Update, void,
-                GlobalNamespace::SongPreviewPlayer* self) {
-    Preview_Update(self);
-    Pump();
-}
-MAKE_HOOK_MATCH(Sync_Update, &GlobalNamespace::AudioTimeSyncController::Update, void,
-                GlobalNamespace::AudioTimeSyncController* self) {
-    Sync_Update(self);
-    Pump();
+// A Unity MonoBehaviour supplies per-frame updates without inline ARM64 hooks.
+// This avoids the unresolved A64HookFunction symbol entirely.
+DECLARE_CLASS_CODE(TwitchBsr, ChatPumpBehaviour, UnityEngine::MonoBehaviour,
+    DECLARE_INSTANCE_METHOD(void, Update);
+)
+DEFINE_TYPE(TwitchBsr, ChatPumpBehaviour);
+void TwitchBsr::ChatPumpBehaviour::Update() { Pump(); }
+
+static void StartChatPump() {
+    auto go = UnityEngine::GameObject::New_ctor("TwitchBsrChatPump");
+    UnityEngine::Object::DontDestroyOnLoad(go);
+    go->AddComponent<TwitchBsr::ChatPumpBehaviour*>();
+    INFO("TwitchBSR: Unity chat pump started");
 }
 
 // ------------------------------------------------------------ BSML Lite UI --
@@ -246,8 +248,7 @@ MOD_EXTERN_FUNC void late_load() noexcept {
         "Twitch BSR", "Twitch BSR", "Twitch chat and song requests", OnModsDidActivate);
 
     INFO("TwitchBSR: menu registration finished");
-    INSTALL_HOOK(Logger, Preview_Update);
-    INSTALL_HOOK(Logger, Sync_Update);
+    StartChatPump();
 
     BsrQueue::Get().SetOnChanged([] {
         BSML::MainThreadScheduler::Schedule([] { RefreshPageText(); });

@@ -1,6 +1,5 @@
 #pragma once
 #include "paper2_scotland2/shared/logger.hpp"
-#include "beatsaber-hook/shared/utils/hooking.hpp"
 #include "scotland2/shared/loader.hpp"
 #include "scotland2/shared/modloader.h"
 
