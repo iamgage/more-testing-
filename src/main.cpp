@@ -18,6 +18,8 @@
 #include "UnityEngine/Vector3.hpp"
 #include "TMPro/TextMeshProUGUI.hpp"
 #include "bsml/shared/BSML.hpp"
+#include "bsml/shared/BSML-Lite.hpp"
+#include "TMPro/TMP_Text.hpp"
 #include "bsml/shared/BSML/MainThreadScheduler.hpp"
 #include "bsml/shared/Helpers/creation.hpp"
 #include "custom-types/shared/macros.hpp"
@@ -113,105 +115,68 @@ MAKE_HOOK_MATCH(Sync_Update, &GlobalNamespace::AudioTimeSyncController::Update, 
     Pump();
 }
 
-// ----------------------------------------------------------------- UI ------
-// A BSML settings page: username box, connect, chat toggle, request queue.
-DECLARE_CLASS_CODEGEN(TwitchBsr, SettingsHost, UnityEngine::MonoBehaviour) {
-    DECLARE_INSTANCE_FIELD(StringW, username);
-    DECLARE_INSTANCE_FIELD(bool, showChat);
-    DECLARE_INSTANCE_FIELD(bool, bsrEnabled);
-    DECLARE_INSTANCE_FIELD(TMPro::TextMeshProUGUI*, statusText);
-    DECLARE_INSTANCE_FIELD(TMPro::TextMeshProUGUI*, queueTextUi);
-    DECLARE_INSTANCE_METHOD(void, OnConnect);
-    DECLARE_INSTANCE_METHOD(void, OnDisconnect);
-    DECLARE_INSTANCE_METHOD(void, OnDownloadAll);
-    DECLARE_INSTANCE_METHOD(void, OnClearQueue);
-    DECLARE_INSTANCE_METHOD(void, OnToggled);
-    DECLARE_INSTANCE_METHOD(void, Refresh);
-};
-DEFINE_TYPE(TwitchBsr, SettingsHost);
-
-static UnityW<TwitchBsr::SettingsHost> g_settingsHost;
-static UnityW<TwitchBsr::SettingsHost> g_modsHost;
-
+// ------------------------------------------------------------ BSML Lite UI --
+// Construct native Quest BSML Lite controls, matching Darth Maul's approach.
 static std::string g_statusOverride;
+static UnityW<TMPro::TMP_Text> g_settingsStatus;
+static UnityW<TMPro::TMP_Text> g_modsStatus;
+static UnityW<TMPro::TMP_Text> g_settingsQueue;
+static UnityW<TMPro::TMP_Text> g_modsQueue;
 
-void TwitchBsr::SettingsHost::Refresh() {
+static std::string StatusString() {
     auto& irc = TwitchIRC::Get();
-    std::string st = !g_statusOverride.empty() ? g_statusOverride
-                   : irc.IsConnected() ? "Connected to #" + irc.Channel() : "Not connected";
-    std::string q;
+    return !g_statusOverride.empty() ? g_statusOverride :
+        (irc.IsConnected() ? "Connected to #" + irc.Channel() : "Not connected");
+}
+static std::string QueueString() {
+    std::string out;
     int i = 1;
     for (auto& r : BsrQueue::Get().Snapshot())
-        q += std::to_string(i++) + ". " + r.songName + " [" + r.key + "] - " + r.requester + "\n";
-    if (q.empty()) q = "(queue empty - viewers type !bsr <key>)";
-    if (statusText) statusText->set_text(st);
-    if (queueTextUi) queueTextUi->set_text(q);
+        out += std::to_string(i++) + ". " + r.songName + " [" + r.key + "] - " + r.requester + "\n";
+    return out.empty() ? "Queue empty (viewers: !bsr <key>)" : out;
 }
-void TwitchBsr::SettingsHost::OnConnect() {
-    g_username = std::string(username);
-    g_statusOverride.clear();
-    if (!TwitchIRC::Get().Connect(g_username)) g_statusOverride = "Invalid Twitch username";
-    else { SaveConfig(); g_statusOverride = "Connecting..."; }
-    Refresh();
+static void RefreshPageText() {
+    if (g_settingsStatus.isAlive()) g_settingsStatus->set_text(StatusString());
+    if (g_modsStatus.isAlive()) g_modsStatus->set_text(StatusString());
+    if (g_settingsQueue.isAlive()) g_settingsQueue->set_text(QueueString());
+    if (g_modsQueue.isAlive()) g_modsQueue->set_text(QueueString());
 }
-void TwitchBsr::SettingsHost::OnDisconnect() { g_statusOverride.clear(); TwitchIRC::Get().Disconnect(); Refresh(); }
-void TwitchBsr::SettingsHost::OnDownloadAll() { BsrQueue::Get().DownloadAll(); }
-void TwitchBsr::SettingsHost::OnClearQueue() { BsrQueue::Get().Clear(); Refresh(); }
-void TwitchBsr::SettingsHost::OnToggled() {
-    g_showChat = showChat;
-    BsrQueue::Get().enabled = bsrEnabled;
-    SaveConfig();
-    RefreshOverlay();
-}
-
-// Use basic BSML components rather than tabs; older Quest BSML builds can fail
-// parsing a tab-selector and prevent the entire settings screen from appearing.
-static const char* kBsml = R"(
-<vertical child-control-height='false' child-expand-height='false' spacing='1' pad='2'>
-  <text text='Twitch BSR' font-size='6' align='Center'/>
-  <text text='Twitch channel (without #)' font-size='3.5'/>
-  <string-setting text='Channel' value='username' apply-on-change='true'/>
-  <horizontal spacing='2'>
-    <button text='Connect' on-click='OnConnect'/>
-    <button text='Disconnect' on-click='OnDisconnect'/>
-  </horizontal>
-  <text id='statusText' text='Not connected' font-size='3.5'/>
-  <toggle-setting text='Enable !bsr requests' value='bsrEnabled' apply-on-change='true' on-change='OnToggled'/>
-  <toggle-setting text='Show chat in game' value='showChat' apply-on-change='true' on-change='OnToggled'/>
-  <text text='Song request queue' font-size='4'/>
-  <text id='queueTextUi' text='Queue empty' font-size='3' word-wrapping='true'/>
-  <horizontal spacing='2'>
-    <button text='Download all' on-click='OnDownloadAll'/>
-    <button text='Clear queue' on-click='OnClearQueue'/>
-  </horizontal>
-</vertical>
-)";
-
-// Each view owns its own host. Never reuse a raw component pointer across menus.
 static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
-                         UnityW<TwitchBsr::SettingsHost>& host) {
-    if (!firstActivation && host.isAlive()) {
-        host->Refresh();
-        return;
-    }
-    auto root = self->get_gameObject();
-    auto component = root->AddComponent<TwitchBsr::SettingsHost*>();
-    host = component;
-    component->username = g_username;
-    component->showChat = g_showChat;
-    component->bsrEnabled = BsrQueue::Get().enabled;
-    BSML::parse_and_construct(kBsml, root->get_transform(), component);
-    component->Refresh();
+                         UnityW<TMPro::TMP_Text>& status, UnityW<TMPro::TMP_Text>& queue) {
+    if (!firstActivation) { RefreshPageText(); return; }
+    auto container = BSML::Lite::CreateScrollableSettingsContainer(self->get_transform());
+    auto parent = container->get_transform();
+    BSML::Lite::CreateText(parent, "Twitch BSR - Quest");
+    BSML::Lite::CreateText(parent, "Twitch channel (no #):");
+    BSML::Lite::CreateStringSetting(parent, "Channel", g_username,
+        [](StringW value) { g_username = std::string(value); SaveConfig(); });
+    BSML::Lite::CreateUIButton(parent, "Connect", [] {
+        g_statusOverride.clear();
+        if (g_username.empty() || !TwitchIRC::Get().Connect(g_username))
+            g_statusOverride = "Enter a valid channel name";
+        else { SaveConfig(); g_statusOverride = "Connecting..."; }
+        RefreshPageText();
+    });
+    BSML::Lite::CreateUIButton(parent, "Disconnect", [] {
+        TwitchIRC::Get().Disconnect(); g_statusOverride.clear(); RefreshPageText();
+    });
+    status = BSML::Lite::CreateText(parent, StatusString());
+    BSML::Lite::CreateToggle(parent, "Enable !bsr requests", BsrQueue::Get().enabled,
+        [](bool enabled) { BsrQueue::Get().enabled = enabled; });
+    BSML::Lite::CreateToggle(parent, "Show chat in game", g_showChat,
+        [](bool enabled) { g_showChat = enabled; SaveConfig(); RefreshOverlay(); });
+    BSML::Lite::CreateText(parent, "Song request queue");
+    queue = BSML::Lite::CreateText(parent, QueueString());
+    BSML::Lite::CreateUIButton(parent, "Download all", [] { BsrQueue::Get().DownloadAll(); RefreshPageText(); });
+    BSML::Lite::CreateUIButton(parent, "Clear queue", [] { BsrQueue::Get().Clear(); RefreshPageText(); });
 }
-
 static void OnSettingsDidActivate(HMUI::ViewController* self, bool firstActivation,
                                   bool addedToHierarchy, bool screenSystemEnabling) {
-    BuildBsrPage(self, firstActivation, g_settingsHost);
+    BuildBsrPage(self, firstActivation, g_settingsStatus, g_settingsQueue);
 }
-
 static void OnModsDidActivate(HMUI::ViewController* self, bool firstActivation,
                               bool addedToHierarchy, bool screenSystemEnabling) {
-    BuildBsrPage(self, firstActivation, g_modsHost);
+    BuildBsrPage(self, firstActivation, g_modsStatus, g_modsQueue);
 }
 
 // ----------------------------------------------------------------- entry ----
@@ -234,7 +199,7 @@ MOD_EXTERN_FUNC void late_load() noexcept {
     INSTALL_HOOK(Logger, Sync_Update);
 
     BsrQueue::Get().SetOnChanged([] {
-        BSML::MainThreadScheduler::Schedule([] { if (g_settingsHost.isAlive()) g_settingsHost->Refresh(); if (g_modsHost.isAlive()) g_modsHost->Refresh(); });
+        BSML::MainThreadScheduler::Schedule([] { RefreshPageText(); });
     });
     if (!g_username.empty()) TwitchIRC::Get().Connect(g_username);  // auto-reconnect on launch
 }
