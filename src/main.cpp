@@ -228,10 +228,10 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
     auto requests = BSML::Lite::CreateVerticalLayoutGroup(parent);
     auto keyboard = BSML::Lite::CreateVerticalLayoutGroup(parent);
     auto show = [connection, chat, requests, keyboard](int page) {
-        connection->SetActive(page == 0);
-        chat->SetActive(page == 1);
-        requests->SetActive(page == 2);
-        keyboard->SetActive(page == 3);
+        connection->get_gameObject()->SetActive(page == 0);
+        chat->get_gameObject()->SetActive(page == 1);
+        requests->get_gameObject()->SetActive(page == 2);
+        keyboard->get_gameObject()->SetActive(page == 3);
     };
     BSML::Lite::CreateUIButton(tabs->get_transform(), "Twitch", [show] { show(0); });
     BSML::Lite::CreateUIButton(tabs->get_transform(), "Chat", [show] { show(1); });
@@ -309,12 +309,12 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
     };
     addKeys(letters->get_transform(), "qwertyuiopasdf");
     addKeys(symbols->get_transform(), "ghjklzxcvbnm0123456789_-");
-    symbols->SetActive(false);
+    symbols->get_gameObject()->SetActive(false);
     auto controls = BSML::Lite::CreateHorizontalLayoutGroup(kb);
     BSML::Lite::CreateUIButton(controls->get_transform(), "More Keys", [letters, symbols] {
-        bool next = letters->get_activeSelf();
-        letters->SetActive(!next);
-        symbols->SetActive(next);
+        bool next = letters->get_gameObject()->get_activeSelf();
+        letters->get_gameObject()->SetActive(!next);
+        symbols->get_gameObject()->SetActive(next);
     });
     BSML::Lite::CreateUIButton(controls->get_transform(), "Delete", [] {
         if (!g_username.empty()) g_username.pop_back();
