@@ -54,6 +54,14 @@ jobs:
           qpm restore --update || qpm restore
           ls extern || true
 
+      - name: Find A64HookFunction
+        run: |
+          ls -la extern/libs || true
+          for f in extern/libs/*.so; do
+            echo "== $f"
+            nm -D --defined-only "$f" 2>/dev/null | grep -i A64Hook || true
+          done
+
       - name: Build native library
         run: |
           cmake -G Ninja -B build \
