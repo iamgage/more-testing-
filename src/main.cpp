@@ -226,97 +226,33 @@ static void RefreshPageText() {
     if (g_modsQueue.isAlive()) g_modsQueue->set_text(QueueString());
     if (g_homeStatus.isAlive()) g_homeStatus->set_text(StatusString());
 }
-// ---- Fixed-position page layout -------------------------------------------
-// Layout groups / scroll containers were not sizing their children on Quest, so
-// every control collapsed onto the same spot. Instead each page is a plain
-// full-size RectTransform and every control gets an explicit anchored position
-// (units are relative to the centre of the settings panel), so nothing can stack.
-static UnityEngine::Transform* MakePage(UnityEngine::Transform* parent, const char* name) {
-    auto go = UnityEngine::GameObject::New_ctor(name);
-    auto rt = go->AddComponent<UnityEngine::RectTransform*>();
-    rt->SetParent(parent, false);
-    rt->set_anchorMin({0.0f, 0.0f});
-    rt->set_anchorMax({1.0f, 1.0f});
-    rt->set_offsetMin({0.0f, 0.0f});
-    rt->set_offsetMax({0.0f, 0.0f});
-    return rt->get_transform();
-}
-static TMPro::TMP_Text* PageText(UnityEngine::Transform* p, const std::string& t,
-                                 float x, float y, float w, float h, float size) {
-    auto txt = BSML::Lite::CreateText(p, t, {x, y}, {w, h});
-    txt->set_fontSize(size);
-    txt->set_alignment(TMPro::TextAlignmentOptions::Center);
-    txt->set_enableWordWrapping(true);
-    return txt;
-}
-static UnityEngine::UI::Button* PageButton(UnityEngine::Transform* p, const std::string& label,
-                       float x, float y, float w, std::function<void()> cb) {
-    return BSML::Lite::CreateUIButton(p, label, {x, y}, {w, 8.0f}, std::move(cb));
-}
+// ---- Single scrollable page (no page switching) ---------------------------
+// Multi-page SetActive was unreliable on Quest for some buttons. One vertical
+// scrollable list keeps every control always present and clickable.
 
 static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
                          UnityW<TMPro::TMP_Text>& status, UnityW<TMPro::TMP_Text>& queue,
                          UnityW<TMPro::TMP_Text>& input) {
-    INFO("TwitchBSR: BuildBsrPage called firstActivation={}", firstActivation);
+    INFO("TwitchBSR: BuildBsrPage (single page) firstActivation={}", firstActivation);
     if (!firstActivation) { RefreshPageText(); return; }
 
-    auto root = self->get_transform();
-    auto home = MakePage(root, "BsrHome");
-    auto conn = MakePage(root, "BsrConnection");
-    auto ch = MakePage(root, "BsrChat");
-    auto req = MakePage(root, "BsrRequests");
-    auto kb = MakePage(root, "BsrKeyboard");
-    auto show = [home, conn, ch, req, kb](int page) {
-        INFO("TwitchBSR: switching to page {}", page);
-        if (home && home->m_CachedPtr.m_value) home->get_gameObject()->SetActive(page == 0);
-        if (conn && conn->m_CachedPtr.m_value) conn->get_gameObject()->SetActive(page == 1);
-        if (ch && ch->m_CachedPtr.m_value) ch->get_gameObject()->SetActive(page == 2);
-        if (req && req->m_CachedPtr.m_value) req->get_gameObject()->SetActive(page == 3);
-        if (kb && kb->m_CachedPtr.m_value) kb->get_gameObject()->SetActive(page == 4);
-        RefreshPageText();
-    };
-    // Start with only the home page visible
-    home->get_gameObject()->SetActive(true);
-    conn->get_gameObject()->SetActive(false);
-    ch->get_gameObject()->SetActive(false);
-    req->get_gameObject()->SetActive(false);
-    kb->get_gameObject()->SetActive(false);
+    auto container = BSML::Lite::CreateScrollableSettingsContainer(self->get_transform());
+    auto parent = container->get_transform();
 
-    const float W = 64.0f;
+    // ---- Status / channel ----
+    BSML::Lite::CreateText(parent, "Twitch BSR");
+    status = BSML::Lite::CreateText(parent, StatusString());
+    input = BSML::Lite::CreateText(parent, "Channel: " + g_username);
+    g_homeStatus = status;  // reuse for home-status updates
 
-    // Home: title + status + three navigation buttons
-    PageText(home, "Twitch BSR", 0, 32, 90, 8, 6.0f);
-    PageText(home, "Chat + !bsr song requests", 0, 24, 90, 6, 3.5f);
-    g_homeStatus = PageText(home, StatusString(), 0, 16, 90, 6, 3.5f);
-    PageButton(home, "Twitch Connection", 0, 5, W, [show] {
-        INFO("TwitchBSR: Twitch Connection button pressed");
-        g_statusOverride = "Opening Connection...";
-        RefreshPageText();
-        show(1);
-    });
-    PageButton(home, "Chat Settings", 0, -6, W, [show] {
-        INFO("TwitchBSR: Chat Settings button pressed");
-        g_statusOverride = "Opening Chat Settings...";
-        RefreshPageText();
-        show(2);
-    });
-    PageButton(home, "Song Requests", 0, -17, W, [show] {
-        INFO("TwitchBSR: Song Requests button pressed");
-        g_statusOverride = "Opening Song Requests...";
-        RefreshPageText();
-        show(3);
-    });
-
-    // Connection page
-    PageText(conn, "Twitch Connection", 0, 33, 90, 8, 6.0f);
-    status = PageText(conn, StatusString(), 0, 24, 90, 7, 4.0f);
-    input = PageText(conn, "Channel: " + g_username, 0, 17, 90, 7, 4.5f);
-    PageText(conn, "Use Edit to type channel, then Connect", 0, 10, 90, 5, 3.2f);
-    PageButton(conn, "Edit Channel Name", 0, 2, W, [show] {
+    // ---- Connection ----
+    BSML::Lite::CreateText(parent, "--- Connection ---");
+    BSML::Lite::CreateUIButton(parent, "Edit Channel Name (keyboard below)", [] {
         INFO("TwitchBSR: Edit Channel Name pressed");
-        show(4);
+        g_statusOverride = "Use keyboard below, then Connect";
+        RefreshPageText();
     });
-    PageButton(conn, "Connect / Save", 0, -7, W, [] {
+    BSML::Lite::CreateUIButton(parent, "Connect / Save", [] {
         INFO("TwitchBSR: Connect / Save pressed, channel={}", g_username);
         auto clean = TwitchIRC::SanitizeChannel(g_username);
         if (!clean) {
@@ -329,23 +265,25 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         }
         RefreshPageText();
     });
-    PageButton(conn, "Disconnect", 0, -16, W, [] {
+    BSML::Lite::CreateUIButton(parent, "Disconnect", [] {
         INFO("TwitchBSR: Disconnect pressed");
         TwitchIRC::Get().Disconnect();
         g_statusOverride = "Disconnected";
         RefreshPageText();
     });
-    PageButton(conn, "Back", 0, -25, W, [show] { show(0); });
 
-    // Chat settings
-    PageText(ch, "Chat Settings", 0, 31, 90, 8, 6.0f);
+    // ---- Chat settings ----
+    BSML::Lite::CreateText(parent, "--- Chat Settings ---");
     auto chatToggle = std::make_shared<UnityEngine::UI::Button*>(nullptr);
-    *chatToggle = PageButton(ch, std::string("Chat Overlay: ") + (g_showChat ? "ON" : "OFF"), 0, 20, W,
+    *chatToggle = BSML::Lite::CreateUIButton(parent,
+        std::string("Chat Overlay: ") + (g_showChat ? "ON" : "OFF"),
         [chatToggle] {
             INFO("TwitchBSR: Chat Overlay toggle pressed, was={}", g_showChat);
             g_showChat = !g_showChat;
             SaveConfig();
-            if (*chatToggle) BSML::Lite::SetButtonText(*chatToggle, std::string("Chat Overlay: ") + (g_showChat ? "ON" : "OFF"));
+            if (*chatToggle)
+                BSML::Lite::SetButtonText(*chatToggle,
+                    std::string("Chat Overlay: ") + (g_showChat ? "ON" : "OFF"));
             if (!g_showChat) {
                 if (g_chatGo && g_chatGo->m_CachedPtr.m_value) g_chatGo->SetActive(false);
             } else {
@@ -354,7 +292,7 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
             g_statusOverride = g_showChat ? "Chat overlay ON" : "Chat overlay OFF";
             RefreshPageText();
         });
-    PageButton(ch, "Test Chat Overlay", 0, 10.5f, W, [] {
+    BSML::Lite::CreateUIButton(parent, "Test Chat Overlay", [] {
         INFO("TwitchBSR: Test Chat Overlay pressed, showChat={}", g_showChat);
         if (!g_showChat) {
             g_statusOverride = "Enable overlay first";
@@ -372,30 +310,33 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         RefreshPageText();
     });
     auto reposition = std::make_shared<UnityEngine::UI::Button*>(nullptr);
-    *reposition = PageButton(ch, "Chat Position: Left", 0, 1, W, [reposition] {
+    *reposition = BSML::Lite::CreateUIButton(parent, "Chat Position: Left", [reposition] {
         INFO("TwitchBSR: Chat Position pressed");
         g_chatPosition = (g_chatPosition + 1) % 3;
         const char* names[] = {"Left", "Right", "Centre"};
-        if (*reposition) BSML::Lite::SetButtonText(*reposition, std::string("Chat Position: ") + names[g_chatPosition]);
+        if (*reposition)
+            BSML::Lite::SetButtonText(*reposition, std::string("Chat Position: ") + names[g_chatPosition]);
         if (g_showChat) BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
         g_statusOverride = std::string("Position: ") + names[g_chatPosition];
         RefreshPageText();
     });
-    PageButton(ch, "Back", 0, -8.5f, W, [show] { show(0); });
 
-    // Song requests
-    PageText(req, "Song Requests", 0, 33, 90, 8, 6.0f);
+    // ---- Song requests ----
+    BSML::Lite::CreateText(parent, "--- Song Requests ---");
     auto bsrToggle = std::make_shared<UnityEngine::UI::Button*>(nullptr);
-    *bsrToggle = PageButton(req, std::string("BSR: ") + (BsrQueue::Get().enabled ? "ON" : "OFF"), 0, 24, W,
+    *bsrToggle = BSML::Lite::CreateUIButton(parent,
+        std::string("BSR: ") + (BsrQueue::Get().enabled ? "ON" : "OFF"),
         [bsrToggle] {
             INFO("TwitchBSR: BSR toggle pressed, was={}", BsrQueue::Get().enabled);
             BsrQueue::Get().enabled = !BsrQueue::Get().enabled;
-            if (*bsrToggle) BSML::Lite::SetButtonText(*bsrToggle, std::string("BSR: ") + (BsrQueue::Get().enabled ? "ON" : "OFF"));
+            if (*bsrToggle)
+                BSML::Lite::SetButtonText(*bsrToggle,
+                    std::string("BSR: ") + (BsrQueue::Get().enabled ? "ON" : "OFF"));
             g_statusOverride = BsrQueue::Get().enabled ? "BSR enabled" : "BSR disabled";
             RefreshPageText();
         });
-    queue = PageText(req, "Queue empty", 0, 12.5f, 90, 13, 3.8f);
-    PageButton(req, "Download Queued Songs", 0, -2, W, [] {
+    queue = BSML::Lite::CreateText(parent, QueueString());
+    BSML::Lite::CreateUIButton(parent, "Download Queued Songs", [] {
         INFO("TwitchBSR: Download Queued Songs pressed");
         auto snap = BsrQueue::Get().Snapshot();
         if (snap.empty()) {
@@ -406,55 +347,45 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         }
         RefreshPageText();
     });
-    PageButton(req, "Play Last Download", 0, -11, W, [] {
+    BSML::Lite::CreateUIButton(parent, "Play Last Download", [] {
         INFO("TwitchBSR: Play Last Download pressed");
         g_statusOverride = "Trying to play last download...";
         RefreshPageText();
         BSML::MainThreadScheduler::Schedule([] { PlayLatestDownloaded(); });
     });
-    PageButton(req, "Clear Queue", 0, -20, W, [] {
+    BSML::Lite::CreateUIButton(parent, "Clear Queue", [] {
         INFO("TwitchBSR: Clear Queue pressed");
         BsrQueue::Get().Clear();
         g_statusOverride = "Queue cleared";
         RefreshPageText();
     });
-    PageButton(req, "Back", 0, -29, W, [show] { show(0); });
 
-    // Keyboard: 12 keys per page in a 6x2 grid, then a centred column of controls.
-    PageText(kb, "Edit Channel", 0, 34, 90, 7, 5.0f);
-    g_kbInputs.push_back(PageText(kb, "Channel: " + g_username, 0, 26, 90, 7, 4.5f));
-    auto keyButtons = std::make_shared<std::vector<UnityEngine::GameObject*>>();
+    // ---- Simple keyboard for channel name ----
+    BSML::Lite::CreateText(parent, "--- Edit Channel (type below) ---");
+    g_kbInputs.push_back(BSML::Lite::CreateText(parent, "Channel: " + g_username));
+
+    // 6 keys per row, multiple rows
     const std::string keys = "abcdefghijklmnopqrstuvwxyz0123456789_-";
-    for (size_t i = 0; i < keys.size(); ++i) {
-        char c = keys[i];
-        size_t slot = i % 12;
-        float x = -27.5f + (slot % 6) * 11.0f;
-        float y = (slot < 6) ? 15.0f : 5.0f;
-        auto button = PageButton(kb, std::string(1, c), x, y, 10, [c] { TypeKey(c); });
-        keyButtons->push_back(button->get_gameObject());
+    for (size_t offset = 0; offset < keys.size(); offset += 6) {
+        auto row = BSML::Lite::CreateHorizontalLayoutGroup(parent);
+        for (char c : keys.substr(offset, 6)) {
+            BSML::Lite::CreateUIButton(row->get_transform(), std::string(1, c),
+                [c] { TypeKey(c); });
+        }
     }
-    const size_t kPages = (keys.size() + 11) / 12;
-    auto pageIndex = std::make_shared<size_t>(0);
-    auto setPage = [keyButtons, pageIndex](size_t page) {
-        *pageIndex = page;
-        for (size_t i = 0; i < keyButtons->size(); ++i)
-            (*keyButtons)[i]->SetActive(i / 12 == page);
-    };
-    PageButton(kb, "Next Keys", 0, -6, W, [pageIndex, setPage, kPages] {
-        setPage((*pageIndex + 1) % kPages);
-    });
-    PageButton(kb, "Previous Keys", 0, -15, W, [pageIndex, setPage, kPages] {
-        setPage((*pageIndex + kPages - 1) % kPages);
-    });
-    PageButton(kb, "Backspace", 0, -24, W, [] {
+    BSML::Lite::CreateUIButton(parent, "Backspace", [] {
         if (!g_username.empty()) g_username.pop_back();
         RefreshPageText();
     });
-    PageButton(kb, "Done", 0, -33, W, [show] { show(1); });
-    setPage(0);
-    show(0);
+    BSML::Lite::CreateUIButton(parent, "Clear Channel", [] {
+        g_username.clear();
+        RefreshPageText();
+    });
+
     RefreshPageText();
+    INFO("TwitchBSR: single-page UI built");
 }
+
 static void OnSettingsDidActivate(HMUI::ViewController* self, bool firstActivation,
                                   bool addedToHierarchy, bool screenSystemEnabling) {
     BuildBsrPage(self, firstActivation, g_settingsStatus, g_settingsQueue, g_settingsInput);

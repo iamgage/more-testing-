@@ -1,25 +1,26 @@
-# Hardened button callbacks + visible feedback (source-only)
+# Single-page UI rewrite (source-only)
 
-## Targeted fixes for the three reported dead buttons
-1. **Twitch Connection** (home page)
-   - Now logs on press, sets status "Opening Connection...", then switches page.
-   - Connection page itself has instructional text so it never looks empty.
+## Why the previous multi-page UI failed
+Page switching with raw Transform* + SetActive was unreliable on Quest.
+Some home buttons (Twitch Connection, Chat Settings) never showed a menu,
+and toggles / Test Chat Overlay produced no visible effect.
 
-2. **BSR: ON/OFF** (Song Requests page)
-   - Logs the previous state, flips the flag, updates the button label, writes status "BSR enabled/disabled".
+## New approach
+One scrollable settings page built with BSML::Lite::CreateScrollableSettingsContainer.
+Every control is always present and clickable — no hidden pages.
 
-3. **Test Chat Overlay** (Chat Settings page)
-   - Logs the current showChat flag.
-   - If overlay is off, status becomes "Enable overlay first".
-   - Otherwise pushes a test line, calls EnsureOverlay(), schedules RefreshOverlay, and sets status "Test message sent - look for overlay".
+Sections (top to bottom):
+1. Status + Channel
+2. Connection (Edit hint, Connect/Save, Disconnect)
+3. Chat Settings (Overlay ON/OFF, Test Chat Overlay, Position)
+4. Song Requests (BSR ON/OFF, queue text, Download, Play Last, Clear)
+5. Simple keyboard (6 keys per row + Backspace + Clear Channel)
 
-## Supporting changes
-- Home page now has a permanent status line (`g_homeStatus`) that updates on every action, so feedback is always visible even if you stay on Home.
-- `show()` page switch is defensive (null/m_CachedPtr checks) and logs the target page.
-- `RefreshPageText()` also refreshes the home status line.
-- Every important button now emits an INFO log so logcat can prove whether the callback fired.
-- PageButton return type is explicit `UnityEngine::UI::Button*`.
+## Feedback
+- Every button logs with INFO "TwitchBSR: ..."
+- Status line at the top updates on every action
+- Toggle buttons update their own labels
 
-## Still experimental / not Quest-tested
-- If a button still produces zero logcat output when pressed, the click is not reaching the BSML button (raycast / hierarchy issue) rather than the C++ callback being empty.
-- Capture logcat after pressing the exact button and look for lines starting with "TwitchBSR:".
+## Still experimental
+Not compiled or tested on Quest. If a button still does nothing, check logcat
+for the corresponding "TwitchBSR:" line right after the press.
