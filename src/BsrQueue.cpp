@@ -125,6 +125,11 @@ void BsrQueue::Clear() {
     if (onChanged) onChanged();
 }
 
+std::optional<SongRequest> BsrQueue::LastDownloaded() {
+    std::lock_guard<std::mutex> lock(mtx);
+    return lastDownloaded;
+}
+
 void BsrQueue::Download(const SongRequest& req) {
     std::string url = req.downloadUrl;
     WebUtils::URLOptions opts(url);
@@ -137,8 +142,14 @@ void BsrQueue::Download(const SongRequest& req) {
         if (std::string("<>:\"/\\|?*").find(c) != std::string::npos) c = '_';
     std::string dir = std::string(kCustomLevels) + name;
     auto& data = *resp.responseData;
-    if (!TwitchBsr::ExtractZip((const uint8_t*)data.data(), data.size(), dir))
+    if (!TwitchBsr::ExtractZip((const uint8_t*)data.data(), data.size(), dir)) {
         INFO("zip extract failed for {}", req.key);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        lastDownloaded = req;
+    }
 }
 
 void BsrQueue::DownloadAll() {

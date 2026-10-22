@@ -29,6 +29,7 @@ public:
     std::vector<SongRequest> Snapshot();
     void Remove(const std::string& key);
     void Clear();
+    std::optional<SongRequest> LastDownloaded();
     void DownloadAll();                       // fetch + extract + refresh songs
     void SetOnChanged(std::function<void()> cb) { onChanged = std::move(cb); }
 
@@ -44,6 +45,7 @@ private:
 
     std::mutex mtx;
     std::vector<SongRequest> queue;
+    std::optional<SongRequest> lastDownloaded;
     std::function<void()> onChanged;
 };
 

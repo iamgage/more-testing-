@@ -22,6 +22,13 @@
 #include "bsml/shared/BSML/MainThreadScheduler.hpp"
 #include "bsml/shared/Helpers/creation.hpp"
 #include "custom-types/shared/macros.hpp"
+#include "GlobalNamespace/LevelSelectionFlowCoordinator.hpp"
+#include "GlobalNamespace/SoloFreePlayFlowCoordinator.hpp"
+#include "GlobalNamespace/SelectLevelCategoryViewController.hpp"
+#include "HMUI/NoTransitionsButton.hpp"
+#include "bsml/shared/Helpers/getters.hpp"
+#include "songcore/shared/SongCore.hpp"
+#include "System/Nullable_1.hpp"
 
 #include <deque>
 #include <fstream>
@@ -78,25 +85,28 @@ static void EnsureOverlay() {
         UnityEngine::Object::DontDestroyOnLoad(g_chatGo);
         auto canvas = g_chatGo->AddComponent<UnityEngine::Canvas*>();
         canvas->set_renderMode(UnityEngine::RenderMode::WorldSpace);
+        canvas->set_sortingOrder(100);
         auto rt = g_chatGo->GetComponent<UnityEngine::RectTransform*>();
         rt->set_sizeDelta({100.0f, 65.0f});
         g_chatText = BSML::Lite::CreateText(g_chatGo->get_transform(),
             "TWITCH CHAT\nWaiting for messages...", {0.0f, 0.0f}, {96.0f, 62.0f});
-        g_chatText->set_fontSize(4.0f);
+        g_chatText->set_fontSize(5.0f);
         g_chatText->set_enableWordWrapping(true);
         g_chatText->set_richText(true);
         g_chatText->set_enableAutoSizing(false);
         INFO("TwitchBSR: chat overlay created");
     }
+    auto canvas = g_chatGo->GetComponent<UnityEngine::Canvas*>();
+    if (canvas) canvas->set_worldCamera(camera);
     auto transform = g_chatGo->get_transform();
     transform->SetParent(camera->get_transform(), false);
-    transform->set_localPosition({-0.75f, 0.0f, 2.2f});
+    transform->set_localPosition({-0.48f, 0.04f, 1.35f});
     transform->set_localEulerAngles({0.0f, 0.0f, 0.0f});
-    transform->set_localScale({0.009f, 0.009f, 0.009f});
+    transform->set_localScale({0.012f, 0.012f, 0.012f});
 }
 
 static void RefreshOverlay() {
-    if (!g_showChat && !g_chatGo) return;
+    if (!g_showChat) { if (g_chatGo && g_chatGo->m_CachedPtr.m_value) g_chatGo->SetActive(false); return; }
     EnsureOverlay();
     if (!g_chatText || !g_chatGo || !g_chatGo->m_CachedPtr.m_value) return;
     INFO("TwitchBSR: refreshing chat overlay, lines={}", g_lines.size());
@@ -107,6 +117,36 @@ static void RefreshOverlay() {
 }
 
 // Runs on the Unity main thread (hooked below).
+// Navigate to the latest downloaded song, following BetterSongSearchQuest's
+// LevelSelectionFlowCoordinator::State + SoloFreePlayFlowCoordinator::Setup pattern.
+static void PlayLatestDownloaded() {
+    auto req = BsrQueue::Get().LastDownloaded();
+    if (!req || req->hash.empty()) { INFO("Play Song: no downloaded map yet"); return; }
+    auto level = SongCore::API::Loading::GetLevelByHash(req->hash);
+    if (!level) { INFO("Play Song: song not loaded by SongCore yet: {}", req->hash); return; }
+    auto pack = SongCore::API::Loading::GetCustomLevelPack();
+    if (!pack) { INFO("Play Song: custom level pack unavailable"); return; }
+    auto container = BSML::Helpers::GetDiContainer();
+    if (!container) { INFO("Play Song: menu DI container unavailable"); return; }
+    auto solo = container->Resolve<GlobalNamespace::SoloFreePlayFlowCoordinator*>();
+    if (!solo) { INFO("Play Song: solo coordinator unavailable"); return; }
+    auto state = GlobalNamespace::LevelSelectionFlowCoordinator::State::New_ctor(
+        pack, static_cast<GlobalNamespace::BeatmapLevel*>(level));
+    auto category = System::Nullable_1<GlobalNamespace::SelectLevelCategoryViewController::LevelCategory>();
+    category.value = GlobalNamespace::SelectLevelCategoryViewController::LevelCategory(
+        GlobalNamespace::SelectLevelCategoryViewController::LevelCategory::All);
+    category.hasValue = true;
+    state->___levelCategory = category;
+    solo->Setup(state);
+    auto soloButton = UnityEngine::GameObject::Find("SoloButton");
+    if (soloButton) {
+        auto button = soloButton->GetComponent<HMUI::NoTransitionsButton*>();
+        if (button) button->Press();
+    } else {
+        INFO("Play Song: SoloButton not found; return to main menu and try again");
+    }
+}
+
 static void RefreshPageText();
 static void Pump() {
     static auto lastRefresh = std::chrono::steady_clock::now();
@@ -119,7 +159,7 @@ static void Pump() {
     if (msgs.empty()) return;
     for (auto& m : msgs) {
         bool privileged = m.isMod || m.isBroadcaster;
-        if (BsrQueue::Get().HandleChat(m.user, m.text, privileged)) continue;  // hide commands from chat view
+        BsrQueue::Get().HandleChat(m.user, m.text, privileged);  // process commands AND show them in chat
         std::string color = m.colorHex.empty() ? "#9146FF" : m.colorHex;
         g_lines.push_back("<b><color=" + color + ">" + Escape(m.user) + "</color></b>: " + Escape(m.text));
         while ((int)g_lines.size() > g_maxLines) g_lines.pop_front();
@@ -181,24 +221,42 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
     auto parent = container->get_transform();
     BSML::Lite::CreateText(parent, "TWITCH BSR");
     input = BSML::Lite::CreateText(parent, "Channel: " + g_username);
-    // A dedicated row for each QWERTY keyboard line. Unlike the old
-    // multi-tap UI, every key inserts exactly its displayed character.
-    BSML::Lite::CreateText(parent, "TWITCH CHANNEL KEYBOARD");
-    const char* rows[] = {"qwertyuiop", "asdfghjkl", "zxcvbnm", "0123456789", "_-"};
-    for (const char* keys : rows) {
-        auto row = BSML::Lite::CreateHorizontalLayoutGroup(parent);
-        for (const char* k = keys; *k; ++k) {
-            const char c = *k;
-            BSML::Lite::CreateUIButton(row->get_transform(), std::string(1, c), [c] { TypeKey(c); });
+    // Keyboard is hidden until requested. Two short pages prevent Quest menu clipping.
+    auto keyboardRoot = UnityEngine::GameObject::New_ctor("TwitchBsrKeyboard");
+    keyboardRoot->get_transform()->SetParent(parent, false);
+    auto pageA = UnityEngine::GameObject::New_ctor("TwitchBsrKeysA");
+    pageA->get_transform()->SetParent(keyboardRoot->get_transform(), false);
+    auto pageB = UnityEngine::GameObject::New_ctor("TwitchBsrKeysB");
+    pageB->get_transform()->SetParent(keyboardRoot->get_transform(), false);
+    auto addKeys = [](UnityEngine::Transform* target, const char* keys) {
+        // Maximum five buttons per row, unlike the previous ten-button layout.
+        std::string letters(keys);
+        for (size_t i = 0; i < letters.size(); i += 5) {
+            auto row = BSML::Lite::CreateHorizontalLayoutGroup(target);
+            for (char c : letters.substr(i, 5)) {
+                BSML::Lite::CreateUIButton(row->get_transform(), std::string(1, c), [c] { TypeKey(c); });
+            }
         }
-    }
-    auto edits = BSML::Lite::CreateHorizontalLayoutGroup(parent);
-    BSML::Lite::CreateUIButton(edits->get_transform(), "Backspace", [] {
+    };
+    addKeys(pageA->get_transform(), "qwertyuiopasdfg");
+    addKeys(pageB->get_transform(), "hjklzxcvbnm0123456789_-");
+    pageB->SetActive(false);
+    auto keyboardControls = BSML::Lite::CreateHorizontalLayoutGroup(keyboardRoot->get_transform());
+    BSML::Lite::CreateUIButton(keyboardControls->get_transform(), "ABC / 123", [pageA, pageB] {
+        bool showB = pageA->get_activeSelf();
+        pageA->SetActive(!showB);
+        pageB->SetActive(showB);
+    });
+    BSML::Lite::CreateUIButton(keyboardControls->get_transform(), "Delete", [] {
         if (!g_username.empty()) g_username.pop_back();
         RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(edits->get_transform(), "Clear", [] {
+    BSML::Lite::CreateUIButton(keyboardControls->get_transform(), "Clear", [] {
         g_username.clear(); RefreshPageText();
+    });
+    keyboardRoot->SetActive(false);
+    BSML::Lite::CreateUIButton(parent, "Edit Channel / Close Keyboard", [keyboardRoot] {
+        keyboardRoot->SetActive(!keyboardRoot->get_activeSelf());
     });
     BSML::Lite::CreateText(parent, "CONNECTION");
     BSML::Lite::CreateUIButton(parent, "Connect / Save", [] {
@@ -241,6 +299,9 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
     queue = BSML::Lite::CreateText(parent, "Queue empty");
     BSML::Lite::CreateUIButton(parent, "Download all", [] {
         BsrQueue::Get().DownloadAll(); RefreshPageText();
+    });
+    BSML::Lite::CreateUIButton(parent, "Play Song (last download)", [] {
+        PlayLatestDownloaded();
     });
     BSML::Lite::CreateUIButton(parent, "Clear queue", [] {
         BsrQueue::Get().Clear(); RefreshPageText();
