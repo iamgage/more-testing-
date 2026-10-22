@@ -74,8 +74,10 @@ jobs:
 
       - name: Package qmod
         run: |
-          qpm qmod manifest || true
+          qpm qmod manifest
+          cat mod.json
           qpm qmod zip TwitchBSR.qmod
+          unzip -l TwitchBSR.qmod
 
       - uses: actions/upload-artifact@v4
         with:
