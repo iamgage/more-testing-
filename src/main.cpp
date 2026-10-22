@@ -270,23 +270,33 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         ch->get_gameObject()->SetActive(page == 2);
         req->get_gameObject()->SetActive(page == 3);
         kb->get_gameObject()->SetActive(page == 4);
+        RefreshPageText();  // always refresh status/queue/channel when switching pages
     };
+    // Start with only the home page visible
+    home->get_gameObject()->SetActive(true);
+    conn->get_gameObject()->SetActive(false);
+    ch->get_gameObject()->SetActive(false);
+    req->get_gameObject()->SetActive(false);
+    kb->get_gameObject()->SetActive(false);
+
     const float W = 64.0f;
     // Everything is a single centred column of wide buttons (no side-by-side
     // pairs, no Toggle widgets) so every control sits in the same proven spot.
 
     // Home: title + three buttons.
     PageText(home, "Twitch BSR", 0, 30, 90, 8, 6.0f);
-    PageButton(home, "Twitch Connection", 0, 14, W, [show] { show(1); });
-    PageButton(home, "Chat Settings", 0, 3, W, [show] { show(2); });
-    PageButton(home, "Song Requests", 0, -8, W, [show] { show(3); });
+    PageText(home, "Chat + !bsr song requests", 0, 22, 90, 6, 3.5f);
+    PageButton(home, "Twitch Connection", 0, 10, W, [show] { show(1); });
+    PageButton(home, "Chat Settings", 0, -1, W, [show] { show(2); });
+    PageButton(home, "Song Requests", 0, -12, W, [show] { show(3); });
 
     // Connection.
     PageText(conn, "Twitch Connection", 0, 33, 90, 8, 6.0f);
     status = PageText(conn, StatusString(), 0, 24, 90, 7, 4.0f);
     input = PageText(conn, "Channel: " + g_username, 0, 17, 90, 7, 4.5f);
-    PageButton(conn, "Edit Channel Name", 0, 6, W, [show] { show(4); });
-    PageButton(conn, "Connect / Save", 0, -3.5f, W, [] {
+    PageText(conn, "Use Edit to type channel, then Connect", 0, 10, 90, 5, 3.2f);
+    PageButton(conn, "Edit Channel Name", 0, 2, W, [show] { show(4); });
+    PageButton(conn, "Connect / Save", 0, -7, W, [] {
         auto clean = TwitchIRC::SanitizeChannel(g_username);
         if (!clean) {
             g_statusOverride = "Invalid channel name";
@@ -298,12 +308,12 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         }
         RefreshPageText();
     });
-    PageButton(conn, "Disconnect", 0, -13, W, [] {
+    PageButton(conn, "Disconnect", 0, -16, W, [] {
         TwitchIRC::Get().Disconnect();
         g_statusOverride = "Disconnected";
         RefreshPageText();
     });
-    PageButton(conn, "Back", 0, -22.5f, W, [show] { show(0); });
+    PageButton(conn, "Back", 0, -25, W, [show] { show(0); });
 
     // Chat settings. The on/off switch is a normal button whose label shows the state.
     PageText(ch, "Chat Settings", 0, 31, 90, 8, 6.0f);
@@ -318,12 +328,20 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
             } else {
                 BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
             }
+            g_statusOverride = g_showChat ? "Chat overlay ON" : "Chat overlay OFF";
+            RefreshPageText();
         });
     PageButton(ch, "Test Chat Overlay", 0, 10.5f, W, [] {
-        if (!g_showChat) return;  // Respect the user's overlay visibility setting.
+        if (!g_showChat) {
+            g_statusOverride = "Enable overlay first";
+            RefreshPageText();
+            return;
+        }
         g_lines.push_back("<color=#9146FF>TEST:</color> Chat overlay test");
         while ((int)g_lines.size() > g_maxLines) g_lines.pop_front();
         BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
+        g_statusOverride = "Test message sent";
+        RefreshPageText();
     });
     auto reposition = std::make_shared<UnityEngine::UI::Button*>(nullptr);
     *reposition = PageButton(ch, "Chat Position: Left", 0, 1, W, [reposition] {
@@ -331,6 +349,8 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         const char* names[] = {"Left", "Right", "Centre"};
         BSML::Lite::SetButtonText(*reposition, std::string("Chat Position: ") + names[g_chatPosition]);
         if (g_showChat) BSML::MainThreadScheduler::Schedule([] { RefreshOverlay(); });
+        g_statusOverride = std::string("Position: ") + names[g_chatPosition];
+        RefreshPageText();
     });
     PageButton(ch, "Back", 0, -8.5f, W, [show] { show(0); });
 
@@ -341,17 +361,28 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         [bsrToggle] {
             BsrQueue::Get().enabled = !BsrQueue::Get().enabled;
             BSML::Lite::SetButtonText(*bsrToggle, std::string("BSR: ") + (BsrQueue::Get().enabled ? "ON" : "OFF"));
+            g_statusOverride = BsrQueue::Get().enabled ? "BSR enabled" : "BSR disabled";
+            RefreshPageText();
         });
     queue = PageText(req, "Queue empty", 0, 12.5f, 90, 13, 3.8f);
     PageButton(req, "Download Queued Songs", 0, -2, W, [] {
-        BsrQueue::Get().DownloadAll();
+        auto snap = BsrQueue::Get().Snapshot();
+        if (snap.empty()) {
+            g_statusOverride = "Queue is empty";
+        } else {
+            g_statusOverride = "Downloading " + std::to_string(snap.size()) + " song(s)...";
+            BsrQueue::Get().DownloadAll();
+        }
         RefreshPageText();
     });
     PageButton(req, "Play Last Download", 0, -11, W, [] {
+        g_statusOverride = "Trying to play last download...";
+        RefreshPageText();
         BSML::MainThreadScheduler::Schedule([] { PlayLatestDownloaded(); });
     });
     PageButton(req, "Clear Queue", 0, -20, W, [] {
         BsrQueue::Get().Clear();
+        g_statusOverride = "Queue cleared";
         RefreshPageText();
     });
     PageButton(req, "Back", 0, -29, W, [show] { show(0); });
