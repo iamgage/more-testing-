@@ -114,7 +114,7 @@ MAKE_HOOK_MATCH(Sync_Update, &GlobalNamespace::AudioTimeSyncController::Update, 
 
 // ----------------------------------------------------------------- UI ------
 // A BSML settings page: username box, connect, chat toggle, request queue.
-DECLARE_CLASS_CODEGEN(TwitchBsr, SettingsHost, UnityEngine::MonoBehaviour,
+DECLARE_CLASS_CODEGEN(TwitchBsr, SettingsHost, UnityEngine::MonoBehaviour) {
     DECLARE_INSTANCE_FIELD(StringW, username);
     DECLARE_INSTANCE_FIELD(bool, showChat);
     DECLARE_INSTANCE_FIELD(bool, bsrEnabled);
@@ -126,7 +126,7 @@ DECLARE_CLASS_CODEGEN(TwitchBsr, SettingsHost, UnityEngine::MonoBehaviour,
     DECLARE_INSTANCE_METHOD(void, OnClearQueue);
     DECLARE_INSTANCE_METHOD(void, OnToggled);
     DECLARE_INSTANCE_METHOD(void, Refresh);
-)
+};
 DEFINE_TYPE(TwitchBsr, SettingsHost);
 
 static TwitchBsr::SettingsHost* g_host = nullptr;
