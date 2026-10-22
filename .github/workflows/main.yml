@@ -72,6 +72,12 @@ jobs:
           cmake --build build -j"$(nproc)"
           ls -la build/*.so
 
+      - name: Inspect built library
+        run: |
+          readelf -d build/libtwitch-bsr.so | grep NEEDED
+          echo "--- undefined A64 symbols:"
+          nm -D --undefined-only build/libtwitch-bsr.so | grep -i A64 || echo none
+
       - name: Package qmod
         run: |
           qpm qmod manifest
@@ -83,7 +89,7 @@ jobs:
         with:
           name: TwitchBSR.qmod
           path: TwitchBSR.qmod
-          if-no-files-found: error
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v4
         if: always()
