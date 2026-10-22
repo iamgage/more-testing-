@@ -36,7 +36,7 @@ static modloader::ModInfo modInfo{MOD_ID, VERSION, 0};
 static constexpr const char* kCfg = "/sdcard/ModData/com.beatgames.beatsaber/Configs/twitch-bsr.txt";
 static std::string g_username;
 static bool g_showChat = true;
-static int g_maxLines = 8;
+static int g_maxLines = 6;
 
 static void LoadConfig() {
     std::ifstream f(kCfg);
@@ -77,12 +77,14 @@ static void EnsureOverlay() {
     g_chatGo->get_transform()->set_eulerAngles({0.0f, -25.0f, 0.0f});
     g_chatGo->get_transform()->set_localScale({0.01f, 0.01f, 0.01f});
     g_chatText = BSML::Lite::CreateText(g_chatGo->get_transform(), "", {0, 0}, {120.0f, 80.0f});
-    g_chatText->set_fontSize(4.0f);
+    g_chatText->set_fontSize(3.0f);
     g_chatText->set_enableWordWrapping(true);
     g_chatText->set_richText(true);
+    g_chatText->set_enableAutoSizing(false);
 }
 
 static void RefreshOverlay() {
+    if (!g_showChat && !g_chatGo) return;
     EnsureOverlay();
     if (!g_chatText) return;
     g_chatGo->SetActive(g_showChat);
@@ -121,6 +123,26 @@ void ScheduleTwitchBsrPump() {
 // ------------------------------------------------------------ BSML Lite UI --
 // Construct native Quest BSML Lite controls, matching Darth Maul's approach.
 static std::string g_statusOverride;
+static void RefreshPageText();
+// Multi-tap keyboard: tap a group repeatedly to cycle its characters.
+static int g_lastGroup = -1;
+static std::chrono::steady_clock::time_point g_lastKeyTime{};
+static size_t g_groupIndex = 0;
+static void TypeGroup(int group, const std::string& chars) {
+    auto now = std::chrono::steady_clock::now();
+    if (g_lastGroup == group && !g_username.empty() &&
+        now - g_lastKeyTime < std::chrono::milliseconds(1100)) {
+        g_groupIndex = (g_groupIndex + 1) % chars.size();
+        g_username.back() = chars[g_groupIndex];
+    } else if (g_username.size() < 25) {
+        g_groupIndex = 0;
+        g_username.push_back(chars[0]);
+    }
+    g_lastGroup = group;
+    g_lastKeyTime = now;
+    RefreshPageText();
+}
+
 static UnityW<TMPro::TMP_Text> g_settingsStatus;
 static UnityW<TMPro::TMP_Text> g_modsStatus;
 static UnityW<TMPro::TMP_Text> g_settingsQueue;
@@ -136,13 +158,15 @@ static std::string StatusString() {
 static std::string QueueString() {
     std::string out;
     int i = 1;
-    for (auto& r : BsrQueue::Get().Snapshot())
-        out += std::to_string(i++) + ". " + r.songName + " [" + r.key + "] - " + r.requester + "\n";
-    return out.empty() ? "Queue empty (viewers: !bsr <key>)" : out;
+    for (auto& r : BsrQueue::Get().Snapshot()) {
+        if (i > 3) { out += "...more requests queued"; break; }
+        out += std::to_string(i++) + ". [" + r.key + "] " + r.requester + "\n";
+    }
+    return out.empty() ? "Queue empty (viewers use !bsr key)" : out;
 }
 static void RefreshPageText() {
-    if (g_settingsInput.isAlive()) g_settingsInput->set_text("Channel: " + g_username + "_");
-    if (g_modsInput.isAlive()) g_modsInput->set_text("Channel: " + g_username + "_");
+    if (g_settingsInput.isAlive()) g_settingsInput->set_text("Channel: " + g_username);
+    if (g_modsInput.isAlive()) g_modsInput->set_text("Channel: " + g_username);
     if (g_settingsStatus.isAlive()) g_settingsStatus->set_text(StatusString());
     if (g_modsStatus.isAlive()) g_modsStatus->set_text(StatusString());
     if (g_settingsQueue.isAlive()) g_settingsQueue->set_text(QueueString());
@@ -155,30 +179,26 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
     if (!firstActivation) { RefreshPageText(); return; }
     auto container = BSML::Lite::CreateScrollableSettingsContainer(self->get_transform());
     auto parent = container->get_transform();
-    BSML::Lite::CreateText(parent, "TWITCH BSR");
-    BSML::Lite::CreateText(parent, "TWITCH CHANNEL");
-    input = BSML::Lite::CreateText(parent, "Channel: " + g_username + "_");
-    // Buttons avoid Beat Saber's restricted string-entry keyboard.
-    // Individual character controls also work on older BSML Lite versions.
-    const std::string keys = "abcdefghijklmnopqrstuvwxyz0123456789_-";
-    for (char ch : keys) {
-        BSML::Lite::CreateUIButton(parent, std::string(1, ch), [ch] {
-            if (g_username.size() < 25) g_username += ch;
-            RefreshPageText();
-        });
+    BSML::Lite::CreateText(parent, "TWITCH BSR | Channel and requests");
+    BSML::Lite::CreateText(parent, "CHANNEL (tap a key again to cycle letters)");
+    input = BSML::Lite::CreateText(parent, "Channel: " + g_username);
+    // A compact multi-tap keyboard avoids stacking 38 full-width buttons.
+    // Each group cycles its characters on repeated taps within 1.1 seconds.
+    const std::string groups[] = {"abc", "def", "ghi", "jkl", "mno", "pqrs", "tuv", "wxyz", "0123456789", "_-"};
+    const char* labels[] = {"ABC", "DEF", "GHI", "JKL", "MNO", "PQRS", "TUV", "WXYZ", "0-9", "_ / -"};
+    for (int i = 0; i < 10; ++i) {
+        BSML::Lite::CreateUIButton(parent, labels[i], [i, chars = groups[i]] { TypeGroup(i, chars); });
     }
     BSML::Lite::CreateUIButton(parent, "Backspace", [] {
         if (!g_username.empty()) g_username.pop_back();
+        g_lastGroup = -1;
         RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(parent, "Clear channel", [] {
-        g_username.clear(); RefreshPageText();
+    BSML::Lite::CreateUIButton(parent, "Clear", [] {
+        g_username.clear(); g_lastGroup = -1; RefreshPageText();
     });
-    BSML::Lite::CreateUIButton(parent, "Save channel", [] {
-        SaveConfig(); g_statusOverride = "Channel saved"; RefreshPageText();
-    });
-    BSML::Lite::CreateText(parent, "CONNECTION");
-    BSML::Lite::CreateUIButton(parent, "Connect to Twitch", [] {
+    BSML::Lite::CreateText(parent, "TWITCH CONNECTION");
+    BSML::Lite::CreateUIButton(parent, "Connect / Save", [] {
         auto clean = TwitchIRC::SanitizeChannel(g_username);
         if (!clean) {
             g_statusOverride = "Invalid channel (3-25 letters, numbers, _)";
@@ -189,6 +209,7 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
             g_statusOverride = started ? "Connecting to #" + g_username + "..." : "Connection rejected";
             INFO("TwitchBSR: connect pressed, channel={}, started={}", g_username, started);
         }
+        g_lastGroup = -1;
         RefreshPageText();
     });
     BSML::Lite::CreateUIButton(parent, "Disconnect", [] {
@@ -197,13 +218,13 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         RefreshPageText();
     });
     status = BSML::Lite::CreateText(parent, StatusString());
-    BSML::Lite::CreateText(parent, "OPTIONS");
+    BSML::Lite::CreateText(parent, "CHAT AND BSR");
     BSML::Lite::CreateToggle(parent, "Enable BSR requests", BsrQueue::Get().enabled,
         [](bool enabled) { BsrQueue::Get().enabled = enabled; });
-    BSML::Lite::CreateToggle(parent, "Show chat", g_showChat,
+    BSML::Lite::CreateToggle(parent, "Show chat overlay", g_showChat,
         [](bool enabled) { g_showChat = enabled; SaveConfig(); RefreshOverlay(); });
-    BSML::Lite::CreateText(parent, "REQUEST QUEUE");
-    queue = BSML::Lite::CreateText(parent, "Queue: see below");
+    BSML::Lite::CreateText(parent, "SONG REQUEST QUEUE");
+    queue = BSML::Lite::CreateText(parent, "Queue empty");
     BSML::Lite::CreateUIButton(parent, "Download all", [] {
         BsrQueue::Get().DownloadAll(); RefreshPageText();
     });
