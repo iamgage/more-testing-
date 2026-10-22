@@ -143,10 +143,12 @@ static void RefreshPageText() {
 }
 static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
                          UnityW<TMPro::TMP_Text>& status, UnityW<TMPro::TMP_Text>& queue) {
+    INFO("TwitchBSR: BuildBsrPage called");
     if (!firstActivation) { RefreshPageText(); return; }
     auto container = BSML::Lite::CreateScrollableSettingsContainer(self->get_transform());
     auto parent = container->get_transform();
-    BSML::Lite::CreateText(parent, "Twitch BSR - Quest");
+    BSML::Lite::CreateText(parent, "TWITCH BSR | CHAT + REQUESTS");
+    BSML::Lite::CreateText(parent, "Connect your channel to show Twitch chat and receive !bsr requests.");
     BSML::Lite::CreateText(parent, "Twitch channel (no #):");
     BSML::Lite::CreateStringSetting(parent, "Channel", g_username,
         [](StringW value) { g_username = std::string(value); SaveConfig(); });
@@ -165,7 +167,7 @@ static void BuildBsrPage(HMUI::ViewController* self, bool firstActivation,
         [](bool enabled) { BsrQueue::Get().enabled = enabled; });
     BSML::Lite::CreateToggle(parent, "Show chat in game", g_showChat,
         [](bool enabled) { g_showChat = enabled; SaveConfig(); RefreshOverlay(); });
-    BSML::Lite::CreateText(parent, "Song request queue");
+    BSML::Lite::CreateText(parent, "REQUEST QUEUE");
     queue = BSML::Lite::CreateText(parent, QueueString());
     BSML::Lite::CreateUIButton(parent, "Download all", [] { BsrQueue::Get().DownloadAll(); RefreshPageText(); });
     BSML::Lite::CreateUIButton(parent, "Clear queue", [] { BsrQueue::Get().Clear(); RefreshPageText(); });
@@ -189,12 +191,14 @@ MOD_EXTERN_FUNC void late_load() noexcept {
     Paper::Logger::RegisterFileContextId(MOD_ID);
     il2cpp_functions::Init();
     custom_types::Register::AutoRegister();
+    INFO("TwitchBSR: before BSML::Init");
     BSML::Init();
-    INFO("late_load reached, registering BSR menu");
+    INFO("TwitchBSR: BSML initialized; registering both menus");
     BSML::Register::RegisterSettingsMenu("Twitch BSR", OnSettingsDidActivate, false);
     BSML::Register::RegisterMainMenuViewControllerMethod(
         "Twitch BSR", "Twitch BSR", "Twitch chat and song requests", OnModsDidActivate);
 
+    INFO("TwitchBSR: menu registration finished");
     INSTALL_HOOK(Logger, Preview_Update);
     INSTALL_HOOK(Logger, Sync_Update);
 
