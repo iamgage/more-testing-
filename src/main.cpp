@@ -167,21 +167,37 @@ static const char* kBsml = R"(
 <bg xmlns='https://monkeymanboy.github.io/BSML-Docs/'
     xsi:schemaLocation='https://monkeymanboy.github.io/BSML-Docs/ https://raw.githubusercontent.com/monkeymanboy/BSML-Docs/gh-pages/BSMLSchema.xsd'>
   <vertical child-control-height='false' child-expand-height='false' spacing='1' pad='2'>
-    <text text='Twitch BSR' font-size='6' align='Center'/>
-    <string-setting text='Twitch username' value='username' apply-on-change='true' hover-hint='Just the channel name, no token needed'/>
-    <horizontal spacing='2'>
-      <button text='Connect' on-click='OnConnect'/>
-      <button text='Disconnect' on-click='OnDisconnect'/>
-    </horizontal>
-    <text id='statusText' text='...' align='Center' font-size='3.5'/>
-    <toggle-setting text='Show chat in game' value='showChat' apply-on-change='true' on-change='OnToggled'/>
-    <toggle-setting text='Enable !bsr requests' value='bsrEnabled' apply-on-change='true' on-change='OnToggled'/>
-    <text text='Song queue' font-size='4' align='Center'/>
-    <text id='queueTextUi' text='...' align='TopLeft' font-size='3' word-wrapping='true'/>
-    <horizontal spacing='2'>
-      <button text='Download all' on-click='OnDownloadAll'/>
-      <button text='Clear queue' on-click='OnClearQueue'/>
-    </horizontal>
+    <text text='BSR' font-size='6' align='Center'/>
+    <tab-selector tab-tag='bsrtabs'/>
+
+    <tab tags='bsrtabs' tab-name='Twitch'>
+      <vertical child-control-height='false' child-expand-height='false' spacing='1' pad='2'>
+        <string-setting text='Twitch username' value='username' apply-on-change='true' hover-hint='Just the channel name, no token needed'/>
+        <horizontal spacing='2'>
+          <button text='Connect' on-click='OnConnect'/>
+          <button text='Disconnect' on-click='OnDisconnect'/>
+        </horizontal>
+        <text id='statusText' text='...' align='Center' font-size='3.5'/>
+      </vertical>
+    </tab>
+
+    <tab tags='bsrtabs' tab-name='Requests'>
+      <vertical child-control-height='false' child-expand-height='false' spacing='1' pad='2'>
+        <toggle-setting text='Enable !bsr requests' value='bsrEnabled' apply-on-change='true' on-change='OnToggled'/>
+        <text text='Song queue' font-size='4' align='Center'/>
+        <text id='queueTextUi' text='...' align='TopLeft' font-size='3' word-wrapping='true'/>
+        <horizontal spacing='2'>
+          <button text='Download all' on-click='OnDownloadAll'/>
+          <button text='Clear queue' on-click='OnClearQueue'/>
+        </horizontal>
+      </vertical>
+    </tab>
+
+    <tab tags='bsrtabs' tab-name='Chat'>
+      <vertical child-control-height='false' child-expand-height='false' spacing='1' pad='2'>
+        <toggle-setting text='Show chat in game' value='showChat' apply-on-change='true' on-change='OnToggled'/>
+      </vertical>
+    </tab>
   </vertical>
 </bg>
 )";
@@ -208,7 +224,8 @@ MOD_EXTERN_FUNC void late_load() noexcept {
     il2cpp_functions::Init();
     custom_types::Register::AutoRegister();
     BSML::Init();
-    BSML::Register::RegisterSettingsMenu("Twitch BSR", OnSettingsDidActivate, false);
+    INFO("late_load reached, registering BSR menu");
+    BSML::Register::RegisterSettingsMenu("BSR", OnSettingsDidActivate, false);
 
     INSTALL_HOOK(Logger, Preview_Update);
     INSTALL_HOOK(Logger, Sync_Update);
